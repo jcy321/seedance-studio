@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+
+# Storage
+storage/*.db
+storage/uploads/*
+storage/videos/*
+storage/images/*
+storage/temp/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Poetry
+backend/README.md
+.github/workflows/
+node_modules/

@@ -1,0 +1,2619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seedance Studio</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&family=Fraunces:wght@600;700&family=JetBrains+Mono:wght@400;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#121212;color:#F0F0F0;font-family:'DM Sans',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}
+.card-hover{transition:transform .16s cubic-bezier(0.16,1,0.3,1),box-shadow .16s, border-color .16s}
+.card-hover:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.35);border-color:rgba(255,255,255,0.16)!important}
+.card-hover:active{transform:scale(0.98)}
+.btn-press{transition:all .12s cubic-bezier(0.16,1,0.3,1)}
+.btn-press:hover{transform:scale(1.02)}
+.btn-press:active{transform:scale(0.96)}
+input:focus,textarea:focus,select:focus{outline:none;border-color:#FF6B00!important}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2E2E2E;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#5C5C5C}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,useContext,createContext} = React;
+
+// ── Config ──
+const API = `${window.location.origin}/sdstudio/api/v1`;
+
+// Theme definitions
+const themes = {
+  dark: {
+    bg:'#121212', surface1:'#1A1A1A', surface2:'#242424', surface3:'#2E2E2E',
+    border:'rgba(255,255,255,0.08)', borderActive:'rgba(255,255,255,0.16)',
+    text:'#F0F0F0', textMuted:'#8A8A8A', textDim:'#5C5C5C',
+    accent:'#FF6B00', accentHover:'#FF8533', accentGlow:'rgba(255,107,0,0.18)',
+    blue:'#4A90E2', blueGlow:'rgba(74,144,226,0.15)',
+    green:'#34D399', greenGlow:'rgba(52,211,153,0.15)',
+    purple:'#A78BFA', purpleGlow:'rgba(167,139,250,0.15)', red:'#F87171',
+  },
+  light: {
+    bg:'#FFFFFF', surface1:'#F8F9FA', surface2:'#E9ECEF', surface3:'#DEE2E6',
+    border:'rgba(0,0,0,0.08)', borderActive:'rgba(0,0,0,0.16)',
+    text:'#212529', textMuted:'#6C757D', textDim:'#ADB5BD',
+    accent:'#FF6B00', accentHover:'#FF8533', accentGlow:'rgba(255,107,0,0.12)',
+    blue:'#0D6EFD', blueGlow:'rgba(13,110,253,0.1)',
+    green:'#198754', greenGlow:'rgba(25,135,84,0.1)',
+    purple:'#6F42C1', purpleGlow:'rgba(111,66,193,0.1)', red:'#DC3545',
+  }
+};
+
+let T = {
+  ...themes.dark,
+  fontDisplay:"'Fraunces','DM Serif Display',serif",
+  fontSans:"'DM Sans',system-ui,-apple-system,sans-serif",
+  fontMono:"'JetBrains Mono','Fira Code',monospace",
+  radiusSm:'6px', radiusMd:'10px', radiusLg:'16px', radiusXl:'24px',
+  easeOut:'cubic-bezier(0.16,1,0.3,1)'
+};
+
+function applyTheme(themeName) {
+  const themeColors = themes[themeName] || themes.dark;
+  Object.assign(T, themeColors);
+  document.body.style.background = T.bg;
+  document.body.style.color = T.text;
+}
+
+// ── API Layer ──
+async function api(path, opts={}) {
+  const token = localStorage.getItem('token');
+  const headers = {'Content-Type':'application/json', ...opts.headers};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API}${path}`, {...opts, headers});
+  if (!res.ok) {
+    let msg = '请求失败';
+    try { const e = await res.json(); msg = e.detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function getToken() { return localStorage.getItem('token'); }
+function getUser() {
+  try { const u = localStorage.getItem('user'); return u ? JSON.parse(u) : null; } catch { return null; }
+}
+function saveAuth(token, user) {
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify(user));
+}
+function clearAuth() { localStorage.removeItem('token'); localStorage.removeItem('user'); }
+
+// ── Toast ──
+const ToastCtx = createContext(null);
+function ToastProvider({children}) {
+  const [toasts,setToasts] = useState([]);
+  const add = useCallback((msg, kind) => {
+    const id = Date.now() + Math.random();
+    setToasts(p => [...p, {id, msg, kind: kind||'info'}]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 2800);
+  }, []);
+  return (
+    <ToastCtx.Provider value={add}>
+      {children}
+      <div style={{position:'fixed',bottom:32,right:32,zIndex:9999,display:'flex',flexDirection:'column',gap:10,pointerEvents:'none'}}>
+        {toasts.map(t => (
+          <div key={t.id} style={{
+            background: t.kind==='success' ? T.greenGlow : t.kind==='error' ? 'rgba(248,113,113,0.18)' : T.surface3,
+            border:'1px solid '+(t.kind==='success'?T.green:t.kind==='error'?T.red:T.border),
+            color:T.text, padding:'10px 18px', borderRadius:T.radiusMd, fontSize:13,
+            backdropFilter:'blur(16px)', pointerEvents:'auto',
+            boxShadow:'0 8px 32px rgba(0,0,0,0.4)'
+          }}>{t.msg}</div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+function useToast() { return useContext(ToastCtx) || (()=>{}); }
+
+// ── TopNav ──
+function TopNav({view, onNavigate, onLogout, theme, onThemeToggle}) {
+  const navItems = [
+    {id:'workspace', label:'工作台'},
+    {id:'assets', label:'我的资产库'},
+    {id:'profile', label:'个人中心'}
+  ];
+  const [clock, setClock] = useState('');
+  useEffect(() => {
+    const tick = () => setClock(new Date().toLocaleTimeString('zh-CN',{hour12:false}));
+    tick(); const id = setInterval(tick,1000); return () => clearInterval(id);
+  }, []);
+  return (
+    <header style={{height:56,background:T.surface1,borderBottom:'1px solid '+T.border,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px',position:'sticky',top:0,zIndex:100}}>
+      <div style={{display:'flex',alignItems:'center',gap:32}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,cursor:'pointer'}} onClick={() => onNavigate('workspace')}>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <circle cx="14" cy="14" r="12" stroke={T.accent} strokeWidth="2" fill="none"/>
+            <path d="M10 14 L13 20 L19 9" stroke={T.accent} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span style={{fontFamily:T.fontDisplay,fontWeight:700,fontSize:17,color:T.text,letterSpacing:'-0.01em'}}>Seedance</span>
+          <span style={{fontSize:11,color:T.textMuted,fontFamily:T.fontMono,background:T.surface2,padding:'2px 6px',borderRadius:4}}>STUDIO</span>
+        </div>
+        <nav style={{display:'flex',gap:4}}>
+          {navItems.map(item => (
+            <button key={item.id} onClick={() => onNavigate(item.id)} style={{
+              background: view===item.id ? T.surface3 : 'transparent',
+              color: view===item.id ? T.text : T.textMuted,
+              border:'none', borderRadius:T.radiusMd, padding:'6px 16px', fontSize:13,
+              fontWeight: view===item.id ? 600 : 400, cursor:'pointer',
+              fontFamily:T.fontSans, transition:'all 160ms '+T.easeOut
+            }}>{item.label}</button>
+          ))}
+        </nav>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:16}}>
+        <span style={{fontFamily:T.fontMono,fontSize:12,color:T.textDim,fontFeatureSettings:'"tnum"'}}>{clock}</span>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:T.green,boxShadow:'0 0 6px '+T.green,display:'inline-block'}}/>
+          <span style={{fontSize:11,color:T.textMuted,letterSpacing:'0.06em'}}>SYSTEM ONLINE</span>
+        </div>
+        <button onClick={onThemeToggle} title={theme==='dark'?'切换到亮色模式':'切换到暗色模式'} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:6,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          {theme==='dark' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          )}
+        </button>
+        <button onClick={onLogout} title="退出登录" style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:6,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+  );
+}
+
+// ── AuthView ──
+function AuthView({onLogin}) {
+  const toast = useToast();
+  const [mode, setMode] = useState('login');
+  const [account, setAccount] = useState('admin@seedance.io');
+  const [password, setPassword] = useState('admin123456');
+  const [regEmail, setRegEmail] = useState('');
+  const [regCode, setRegCode] = useState('');
+  const [countdown, setCountdown] = useState(0);
+  const [codeSent, setCodeSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (countdown > 0) { const t = setTimeout(() => setCountdown(c=>c-1), 1000); return () => clearTimeout(t); }
+  }, [countdown]);
+
+  const sendCode = async () => {
+    if (!regEmail.includes('@')) { toast('请输入有效邮箱地址','error'); return; }
+    setCodeSent(true); setCountdown(60);
+    try {
+      await api('/auth/send-code', {method:'POST', body:JSON.stringify({email:regEmail})});
+      toast('验证码已发送至 '+regEmail,'success');
+    } catch (e) {
+      toast(e.message,'error');
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!account.trim()) { toast('请输入账号','error'); return; }
+    if (password.length < 6) { toast('密码至少6位','error'); return; }
+    setLoading(true);
+    try {
+      const data = await api('/auth/login', {method:'POST', body:JSON.stringify({email:account, password})});
+      saveAuth(data.access_token, {name:data.nickname||data.email, email:data.email});
+      toast('登录成功','success');
+      setTimeout(() => onLogin(), 400);
+    } catch (e) {
+      toast(e.message,'error');
+    } finally { setLoading(false); }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    if (!regEmail.includes('@')) { toast('请输入有效邮箱','error'); return; }
+    if (regCode.length < 4) { toast('请输入完整验证码','error'); return; }
+    setLoading(true);
+    try {
+      const data = await api('/auth/register', {
+        method:'POST',
+        body:JSON.stringify({email:regEmail, password:'test123456', verification_code:regCode, nickname:regEmail.split('@')[0]})
+      });
+      saveAuth(data.access_token, {name:data.nickname||data.email, email:data.email});
+      toast('注册成功','success');
+      setTimeout(() => onLogin(), 500);
+    } catch (e) {
+      toast(e.message,'error');
+    } finally { setLoading(false); }
+  };
+
+  const isLogin = mode === 'login';
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'radial-gradient(ellipse at 50% 50%, '+T.accentGlow+', transparent 70%), '+T.bg}}>
+      <div style={{width:420,background:T.surface1,borderRadius:T.radiusXl,border:'1px solid '+T.border,padding:'40px 36px',boxShadow:'0 24px 80px rgba(0,0,0,0.5)'}}>
+        <div style={{textAlign:'center',marginBottom:32}}>
+          <svg width="40" height="40" viewBox="0 0 28 28" fill="none" style={{marginBottom:16}}>
+            <circle cx="14" cy="14" r="12" stroke={T.accent} strokeWidth="2" fill="none"/>
+            <path d="M10 14 L13 20 L19 9" stroke={T.accent} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <h1 style={{fontFamily:T.fontDisplay,fontSize:24,color:T.text,margin:0,fontWeight:700}}>{isLogin?'欢迎回到 Seedance':'创建 Seedance 账号'}</h1>
+          <p style={{color:T.textMuted,fontSize:14,marginTop:8}}>{isLogin?'使用邮箱密码登录':'输入邮箱获取验证码完成注册'}</p>
+        </div>
+        {isLogin ? (
+          <form onSubmit={handleLogin}>
+            <div style={{marginBottom:14}}>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>邮箱</label>
+              <input type="email" value={account} onChange={e=>setAccount(e.target.value)}
+                placeholder="your@email.com"
+                style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',transition:'border 160ms '+T.easeOut,boxSizing:'border-box'}}/>
+            </div>
+            <div style={{marginBottom:24}}>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>密码</label>
+              <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="输入密码"
+                style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',transition:'border 160ms '+T.easeOut,boxSizing:'border-box'}}/>
+            </div>
+            <button type="submit" disabled={loading}
+              style={{width:'100%',background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'14px',fontSize:15,fontWeight:700,cursor:loading?'default':'pointer',fontFamily:T.fontSans,boxShadow:'0 4px 20px '+T.accentGlow,opacity:loading?.6:1}}>
+              {loading?'登录中...':'登录'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleRegister}>
+            <div style={{marginBottom:14}}>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>邮箱地址</label>
+              <input type="email" value={regEmail} onChange={e=>setRegEmail(e.target.value)} placeholder="name@example.com"
+                style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',transition:'border 160ms '+T.easeOut,boxSizing:'border-box'}}/>
+            </div>
+            <div style={{marginBottom:24}}>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>验证码</label>
+              <div style={{display:'flex',gap:10}}>
+                <input type="text" value={regCode} onChange={e=>setRegCode(e.target.value)} placeholder="6位验证码" maxLength={6}
+                  style={{flex:1,background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',transition:'border 160ms '+T.easeOut,boxSizing:'border-box'}}/>
+                <button type="button" onClick={sendCode} disabled={countdown>0}
+                  style={{background:countdown>0?T.surface3:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'12px 18px',fontSize:13,fontWeight:600,cursor:countdown>0?'default':'pointer',whiteSpace:'nowrap',opacity:countdown>0?.6:1}}>
+                  {countdown>0 ? countdown+'s' : codeSent ? '重新发送' : '获取验证码'}
+                </button>
+              </div>
+            </div>
+            <button type="submit" disabled={loading}
+              style={{width:'100%',background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'14px',fontSize:15,fontWeight:700,cursor:loading?'default':'pointer',boxShadow:'0 4px 20px '+T.accentGlow,opacity:loading?.6:1}}>
+              {loading?'注册中...':'注册并登录'}
+            </button>
+          </form>
+        )}
+        <p style={{textAlign:'center',marginTop:20,color:T.textMuted,fontSize:13}}>
+          {isLogin?'还没有账号？':'已有账号？'}
+          <button onClick={()=>{setMode(m=>m==='login'?'register':'login'); setRegCode(''); setCodeSent(false); setCountdown(0);}}
+            style={{background:'none',border:'none',color:T.accent,cursor:'pointer',fontSize:13,fontWeight:600}}>{isLogin?'立即注册':'去登录'}
+          </button>
+        </p>
+        <p style={{textAlign:'center',marginTop:12,color:T.textDim,fontSize:11}}>
+          开发模式：验证码可直接用 <span style={{fontFamily:T.fontMono,color:T.accent}}>000000</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── ViewTransition ──
+function ViewTransition({view, children}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.style.opacity = '0'; ref.current.style.transform = 'translateY(8px)';
+      requestAnimationFrame(() => {
+        ref.current.style.transition = 'opacity 220ms '+T.easeOut+', transform 220ms '+T.easeOut;
+        ref.current.style.opacity = '1'; ref.current.style.transform = 'translateY(0)';
+      });
+    }
+  }, [view]);
+  return <div ref={ref} style={{minHeight:'calc(100vh - 56px)'}}>{children}</div>;
+}
+
+// ── WorkspaceView ──
+function WorkspaceView({onOpenProject}) {
+  const toast = useToast();
+  const [projects, setProjects] = useState([]);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+
+  const fetchProjects = async () => {
+    try {
+      const data = await api('/projects');
+      setProjects(data);
+    } catch (e) { toast(e.message,'error'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { fetchProjects(); }, []);
+
+  const handleNew = async () => {
+    if (!newTitle.trim()) { toast('请输入剧本名称','error'); return; }
+    try {
+      const p = await api('/projects', {method:'POST', body:JSON.stringify({title:newTitle.trim()})});
+      toast('新剧本已创建','success');
+      setShowNew(false); setNewTitle('');
+      fetchProjects();
+      onOpenProject(p);
+    } catch (e) { toast(e.message,'error'); }
+  };
+
+  const filtered = projects.filter(p => {
+    if (filter !== 'all' && p.status !== filter) return false;
+    if (search && !p.title.includes(search)) return false;
+    return true;
+  });
+
+  const generatingCount = projects.filter(p => p.status==='generating').length;
+
+  return (
+    <main style={{padding:'40px 40px 60px',maxWidth:1280,margin:'0 auto'}}>
+      <section style={{marginBottom:36}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:20}}>
+          <div>
+            <h1 style={{fontFamily:T.fontDisplay,fontSize:30,fontWeight:700,color:T.text,margin:'0 0 6px'}}>我的工作台</h1>
+            <p style={{color:T.textMuted,fontSize:14,margin:0}}>共 {projects.length} 个剧本{generatingCount>0?` · ${generatingCount}个正在生成中`:''}</p>
+          </div>
+          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            <div style={{position:'relative'}}>
+              <input placeholder="搜索剧本..." value={search} onChange={e=>setSearch(e.target.value)}
+                style={{width:200,background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'9px 14px',color:T.text,fontSize:13,outline:'none'}}/>
+            </div>
+            <select value={filter} onChange={e=>setFilter(e.target.value)}
+              style={{background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'9px 12px',color:T.text,fontSize:13,outline:'none',cursor:'pointer'}}>
+              <option value="all">全部状态</option>
+              <option value="draft">草稿</option>
+              <option value="parsing">解析中</option>
+              <option value="ready">就绪</option>
+              <option value="generating">生成中</option>
+              <option value="completed">已完成</option>
+            </select>
+          </div>
+        </div>
+      </section>
+      <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(300px, 1fr))',gap:20}}>
+        <article onClick={()=>setShowNew(true)} className="card-hover" style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px dashed '+T.border,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:280,cursor:'pointer'}}>
+          <div style={{width:56,height:56,borderRadius:'50%',border:'2px dashed '+T.accent+'44',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:16}}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={T.accent} strokeWidth="1.8">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </div>
+          <span style={{fontFamily:T.fontDisplay,fontSize:17,color:T.accent,fontWeight:600}}>新建剧本</span>
+          <span style={{fontSize:12,color:T.textDim,marginTop:6}}>上传Word文档开始创作</span>
+        </article>
+        {loading ? <div style={{gridColumn:'1/-1',textAlign:'center',padding:60,color:T.textMuted}}>加载中...</div> : null}
+        {filtered.map(p => <ProjectCard key={p.id} project={p} onClick={onOpenProject}/>)}
+        {!loading && filtered.length===0 && (
+          <div style={{gridColumn:'1/-1',textAlign:'center',padding:'60px 20px',background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border}}>
+            <p style={{color:T.textMuted,fontSize:15,fontWeight:600}}>没有找到匹配的剧本</p>
+            <p style={{color:T.textDim,fontSize:13,marginTop:6}}>尝试调整搜索词或筛选条件</p>
+          </div>
+        )}
+      </section>
+      {showNew && (
+        <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>{setShowNew(false);setNewTitle('')}}>
+          <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(4px)'}}/>
+          <div onClick={e=>e.stopPropagation()} style={{position:'relative',width:440,background:T.surface1,borderRadius:T.radiusXl,border:'1px solid '+T.border,padding:32,boxShadow:'0 32px 96px rgba(0,0,0,0.6)'}}>
+            <h2 style={{fontFamily:T.fontDisplay,fontSize:20,color:T.text,margin:'0 0 20px',fontWeight:700}}>新建剧本</h2>
+            <input autoFocus value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="输入剧本名称..."
+              style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box',marginBottom:20}}
+              onKeyDown={e=>e.key==='Enter'&&handleNew()}/>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>{setShowNew(false);setNewTitle('')}}
+                style={{background:'transparent',border:'1px solid '+T.border,borderRadius:T.radiusMd,color:T.textMuted,padding:'10px 20px',fontSize:13,fontWeight:600,cursor:'pointer'}}>取消</button>
+              <button onClick={handleNew}
+                style={{background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'10px 24px',fontSize:13,fontWeight:700,cursor:'pointer',boxShadow:'0 4px 16px '+T.accentGlow}}>创建</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+// ── ProjectCard ──
+function ProjectCard({project, onClick}) {
+  const pct = project.progress ? Math.round((project.progress.done/project.progress.total)*100) : 0;
+  const statusMap = {
+    draft:{label:'草稿',color:T.textMuted,bg:T.surface2},
+    parsing:{label:'解析中',color:T.blue,bg:T.blueGlow},
+    ready:{label:'就绪',color:T.green,bg:T.greenGlow},
+    generating:{label:'生成中',color:T.blue,bg:T.blueGlow},
+    completed:{label:'已完成',color:T.green,bg:T.greenGlow},
+    failed:{label:'失败',color:T.red,bg:'rgba(248,113,113,0.18)'}
+  };
+  const s = statusMap[project.status] || statusMap.draft;
+  return (
+    <article className="card-hover" onClick={() => project.id && onClick(project)}
+      style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,overflow:'hidden',cursor:'pointer'}}>
+      <div style={{height:140,background:'linear-gradient(135deg,'+T.accent+'22,'+T.purple+'22)',display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+        <div style={{width:48,height:48,borderRadius:'50%',background:T.surface3+'aa',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={T.accent} strokeWidth="1.5">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+        </div>
+        <span style={{position:'absolute',top:10,right:12,fontSize:11,padding:'3px 10px',borderRadius:999,background:s.bg,color:s.color,fontWeight:600}}>{s.label}</span>
+      </div>
+      <div style={{padding:'18px 20px 20px'}}>
+        <h3 style={{fontFamily:T.fontDisplay,fontSize:16,fontWeight:600,color:T.text,margin:'0 0 6px',lineHeight:1.4}}>{project.title}</h3>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+          <div style={{flex:1,height:3,background:T.surface3,borderRadius:999,overflow:'hidden'}}>
+            <div style={{height:'100%',width:pct+'%',background:pct===100?T.green:T.accent,borderRadius:999,transition:'width 400ms '+T.easeOut}}/>
+          </div>
+          <span style={{fontSize:11,color:T.textMuted,fontFamily:T.fontMono}}>{project.progress?.done||0}/{project.progress?.total||0}</span>
+        </div>
+        <span style={{fontSize:11,color:T.textDim}}>
+          {project.updated_at ? new Date(project.updated_at).toLocaleString('zh-CN') : ''}
+        </span>
+      </div>
+    </article>
+  );
+}
+
+// ── ScriptDetailView ──
+function ScriptDetailView({project, onBack, onOpenAssetWorkflow}) {
+  const toast = useToast();
+  const [phase, setPhase] = useState(project.docx_path ? 'storyboard' : 'upload');
+  const [storyboard, setStoryboard] = useState([]);
+  const [characters, setCharacters] = useState([]);
+  const [characterPanel, setCharacterPanel] = useState(null);
+  const [assetDrawer, setAssetDrawer] = useState(null);
+  const [assetPanel, setAssetPanel] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('正在准备...');
+  const [scriptId, setScriptId] = useState(null);
+  const [scriptsLoading, setScriptsLoading] = useState(false);
+
+  useEffect(() => {
+    if (project.id) {
+      setScriptId(null);
+      setAssetPanel(null);
+      loadStoryboard();
+      loadCharacters();
+      loadScript();
+    }
+  }, [project.id]);
+
+  const loadScript = async () => {
+    setScriptsLoading(true);
+    try {
+      console.log('Loading scripts for project:', project.id);
+      const scripts = await api(`/scripts/projects/${project.id}/list`);
+      console.log('Scripts loaded:', scripts);
+      if (scripts && scripts.length > 0) {
+        console.log('Setting scriptId to:', scripts[0].id);
+        setScriptId(scripts[0].id);
+        return scripts[0].id;
+      } else {
+        console.log('No scripts found');
+        setScriptId(null);
+        return null;
+      }
+    } catch (e) {
+      console.error('Error loading scripts:', e);
+      setScriptId(null);
+      return null;
+    } finally {
+      setScriptsLoading(false);
+    }
+  };
+
+  const ensureScriptId = async () => {
+    if (scriptId) return scriptId;
+    const loadedScriptId = await loadScript();
+    if (loadedScriptId) return loadedScriptId;
+
+    if (storyboard.length > 0) {
+      toast('当前项目缺少脚本记录，请重新上传文档后再提取资产', 'error');
+    } else {
+      toast('请先上传剧本文档', 'error');
+    }
+    return null;
+  };
+
+  const openAssetPanel = async (panelType) => {
+    const nextScriptId = await ensureScriptId();
+    if (!nextScriptId) return;
+    setAssetPanel(panelType);
+  };
+
+  const loadStoryboard = async () => {
+    try {
+      const data = await api(`/projects/${project.id}/storyboards`);
+      setStoryboard(data);
+      if (data.length > 0) setPhase('storyboard');
+    } catch (e) { /* empty */ }
+  };
+
+  const loadCharacters = async () => {
+    try {
+      const assets = await api('/assets?type=character');
+      setCharacters(assets.map(a => ({
+        id: a.id,
+        name: a.original_name,
+        alias: a.alias_name,
+        status: 'matched',
+        thumbnail: a.image_url
+      })));
+    } catch (e) { /* empty */ }
+  };
+
+  const handleUpload = async (e) => {
+    const file = e?.target?.files?.[0] || e?.dataTransfer?.files?.[0];
+    if (!file) { toast('请选择Word文档','error'); return; }
+    if (!file.name.match(/\.docx?$/i)) { toast('仅支持 .docx 格式','error'); return; }
+
+    setPhase('parsing');
+    setProgress(0);
+    setProgressMessage('正在上传文件...');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${API}/scripts/projects/${project.id}/upload`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${getToken()}` },
+        body: formData
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || '上传失败');
+
+      const uploadResult = await res.json();
+      const uploadedScriptId = uploadResult.id;
+      console.log('Script uploaded, scriptId:', uploadedScriptId);
+      setScriptId(uploadedScriptId);
+
+      // 轮询解析进度
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const progressData = await api(`/scripts/${uploadedScriptId}/parsing-progress`);
+
+          setProgress(progressData.progress || 0);
+          setProgressMessage(progressData.message || '处理中...');
+
+          if (progressData.status === 'completed') {
+            clearInterval(poll);
+            setProgress(100);
+            // 加载分镜数据
+            const data = await api(`/projects/${project.id}/storyboards`);
+            setStoryboard(data);
+            setPhase('storyboard');
+            toast(`解析完成，共 ${data.length} 个分镜`, 'success');
+          } else if (progressData.status === 'error') {
+            clearInterval(poll);
+            setPhase('upload');
+            toast(progressData.message || '解析失败', 'error');
+          }
+        } catch (e) {
+          // 继续轮询
+        }
+
+        if (attempts > 60) {
+          clearInterval(poll);
+          setPhase('upload');
+          toast('解析超时，请重试','error');
+        }
+      }, 500);
+    } catch (e) {
+      toast(e.message,'error');
+      setPhase('upload');
+    }
+  };
+
+  const handleEditPrompt = async (shotId, newVal) => {
+    try {
+      await api(`/storyboards/${shotId}`, {method:'PUT', body:JSON.stringify({prompt_text:newVal})});
+      setStoryboard(prev => prev.map(s => s.id===shotId ? {...s, prompt_text:newVal} : s));
+      toast('提示词已更新','success');
+    } catch (e) { toast(e.message,'error'); }
+  };
+
+  const handleGenerate = async () => {
+    setLoading(true);
+    try {
+      const data = await api(`/generation/project/${project.id}/start`, {method:'POST'});
+      toast('已提交生成队列','success');
+    } catch (e) { toast(e.message,'error'); }
+    finally { setLoading(false); }
+  };
+
+  // Upload phase
+  if (phase === 'upload') return (
+    <main style={{padding:'40px 40px 60px',maxWidth:1100,margin:'0 auto'}}>
+      <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:36}}>
+        <button onClick={onBack} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',display:'flex'}}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <h1 style={{fontFamily:T.fontDisplay,fontSize:24,fontWeight:700,color:T.text,margin:0}}>{project.title||'未命名剧本'}</h1>
+      </div>
+      <section
+        onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=T.accent+'44';e.currentTarget.style.background=T.surface2}}
+        onDragLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=T.surface1}}
+        onDrop={e=>{e.preventDefault(); handleUpload(e);}}
+        onClick={()=>document.getElementById('docx-input').click()}
+        style={{border:'2px dashed '+T.border,borderRadius:T.radiusXl,padding:'80px 40px',textAlign:'center',transition:'all 200ms '+T.easeOut,cursor:'pointer',background:T.surface1}}>
+        <input id="docx-input" type="file" accept=".docx,.doc" style={{display:'none'}} onChange={handleUpload}/>
+        <div style={{width:72,height:72,borderRadius:'50%',background:T.accentGlow,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 24px'}}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={T.accent} strokeWidth="1.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+        </div>
+        <h2 style={{fontFamily:T.fontDisplay,fontSize:20,color:T.text,margin:'0 0 8px'}}>上传剧本文件</h2>
+        <p style={{color:T.textMuted,fontSize:14,margin:'0 0 24px'}}>支持 .docx 格式 · 拖拽文件到此处或点击上传</p>
+        <span style={{display:'inline-block',background:T.accent,color:'#fff',padding:'12px 28px',borderRadius:T.radiusMd,fontSize:14,fontWeight:700}}>选择 Word 文档</span>
+      </section>
+    </main>
+  );
+
+  // Parsing phase
+  if (phase === 'parsing') return (
+    <main style={{padding:'40px 40px 60px',maxWidth:1100,margin:'0 auto'}}>
+      <button onClick={onBack} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',display:'flex',marginBottom:36}}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <section style={{textAlign:'center',padding:'100px 40px',background:T.surface1,borderRadius:T.radiusXl,border:'1px solid '+T.border}}>
+        <div style={{marginBottom:32,position:'relative',display:'inline-block'}}>
+          <svg width="80" height="80" viewBox="0 0 80 80" fill="none" style={{animation:'spin 1.6s linear infinite',transformOrigin:'center'}}>
+            <circle cx="40" cy="40" r="34" stroke={T.surface3} strokeWidth="4" fill="none"/>
+            <circle cx="40" cy="40" r="34" stroke={T.accent} strokeWidth="4" fill="none" strokeDasharray="213" strokeDashoffset={213-(213*progress/100)} strokeLinecap="round"/>
+          </svg>
+          <span style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',fontFamily:T.fontMono,fontSize:16,color:T.accent,fontWeight:700}}>{Math.round(progress)}%</span>
+        </div>
+        <h2 style={{fontFamily:T.fontDisplay,fontSize:20,color:T.text,margin:'0 0 8px'}}>正在解析分镜...</h2>
+        <p style={{color:T.textMuted,fontSize:14,margin:0}}>{progressMessage}</p>
+      </section>
+    </main>
+  );
+
+  // Storyboard phase
+  return (
+    <main style={{padding:'32px 32px 60px',maxWidth:1400,margin:'0 auto'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:28,flexWrap:'wrap',gap:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:14}}>
+          <button onClick={onBack} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',display:'flex'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div>
+            <h1 style={{fontFamily:T.fontDisplay,fontSize:22,fontWeight:700,color:T.text,margin:0}}>{project.title||'未命名剧本'}</h1>
+            <span style={{fontSize:12,color:T.textMuted}}>分镜 {storyboard.length} 个</span>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={()=>onOpenAssetWorkflow(project, scriptId)} disabled={scriptsLoading || !scriptId}
+            style={{background:T.blueGlow,border:'1px solid '+T.blue+'44',borderRadius:T.radiusMd,color:T.blue,padding:'10px 18px',fontSize:13,fontWeight:600,cursor:(scriptsLoading||!scriptId)?'default':'pointer',opacity:(scriptsLoading||!scriptId)?0.6:1}}>
+            管理资产
+          </button>
+          <button onClick={handleGenerate} disabled={loading}
+            style={{background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'10px 22px',fontSize:13,fontWeight:700,cursor:loading?'default':'pointer',boxShadow:'0 4px 16px '+T.accentGlow,opacity:loading?.6:1}}>
+            {loading?'提交生成...':'提交生成'}
+          </button>
+        </div>
+      </div>
+      <section style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,overflow:'hidden'}}>
+        <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse'}}>
+            <thead>
+              <tr style={{background:T.surface2,borderBottom:'1px solid '+T.border}}>
+                <th style={{padding:'12px 12px',fontSize:11,color:T.textMuted,fontWeight:600,textAlign:'left',width:60}}>镜号</th>
+                <th style={{padding:'12px 12px',fontSize:11,color:T.textMuted,fontWeight:600,textAlign:'left',width:200}}>场景 · 画面描述</th>
+                <th style={{padding:'12px 12px',fontSize:11,color:T.textMuted,fontWeight:600,textAlign:'left'}}>提示词（点击编辑）</th>
+                <th style={{padding:'12px 12px',fontSize:11,color:T.textMuted,fontWeight:600,textAlign:'left',width:100}}>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {storyboard.map((shot) => (
+                <StoryboardRow key={shot.id} shot={shot} onEditPrompt={handleEditPrompt}
+                  onOpenCharacters={()=>setCharacterPanel(shot)}
+                  onOpenAsset={()=>setAssetDrawer(shot)}/>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <GenerationTimeline storyboard={storyboard}/>
+      {characterPanel && <CharacterPanel characters={characters} projectId={project.id} onClose={()=>setCharacterPanel(null)} toast={toast}/>}
+      {assetDrawer && <AssetDrawer shot={assetDrawer} onClose={()=>setAssetDrawer(null)} toast={toast}/>}
+      {assetPanel && scriptId && <AssetManagementPanel type={assetPanel} projectId={project.id} scriptId={scriptId} onClose={()=>setAssetPanel(null)} toast={toast}/>}
+    </main>
+  );
+}
+
+// ── StoryboardRow ──
+function StoryboardRow({shot, onEditPrompt, onOpenCharacters, onOpenAsset}) {
+  const [editing, setEditing] = useState(false);
+  const [promptVal, setPromptVal] = useState(shot.prompt_text || '');
+  const statusMap = {
+    pending:{dot:T.textDim,label:'待处理',bg:T.surface2},
+    generating:{dot:T.blue,label:'生成中',bg:T.blueGlow},
+    completed:{dot:T.green,label:'已完成',bg:T.greenGlow},
+    failed:{dot:T.red,label:'失败',bg:'rgba(248,113,113,0.18)'}
+  };
+  const s = statusMap[shot.status] || statusMap.pending;
+  const handleSave = () => { setEditing(false); onEditPrompt(shot.id, promptVal); };
+  return (
+    <tr style={{borderBottom:'1px solid '+T.border,transition:'background 160ms '+T.easeOut}} onMouseEnter={e=>e.currentTarget.style.background=T.surface2} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+      <td style={{padding:'14px 12px',fontFamily:T.fontMono,fontSize:13,color:T.accent,fontWeight:600,width:60}}>
+        <span style={{display:'inline-block',width:28,height:28,borderRadius:6,background:T.accentGlow,textAlign:'center',lineHeight:'28px'}}>{String(shot.sequence).padStart(2,'0')}</span>
+      </td>
+      <td style={{padding:'14px 12px',width:200}}>
+        <div style={{color:T.textMuted,fontSize:12,lineHeight:1.5}}>{shot.shot_description}</div>
+      </td>
+      <td style={{padding:'14px 12px'}}>
+        {editing ? (
+          <div style={{display:'flex',gap:6,alignItems:'flex-start'}}>
+            <textarea value={promptVal} onChange={e=>setPromptVal(e.target.value)} rows={3}
+              style={{flex:1,background:T.surface3,border:'1px solid '+T.accent,borderRadius:T.radiusSm,color:T.text,fontSize:12,fontFamily:T.fontMono,padding:'8px 10px',outline:'none',resize:'vertical',lineHeight:1.6}}/>
+            <button onClick={handleSave} style={{background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusSm,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>保存</button>
+          </div>
+        ) : (
+          <div onClick={()=>setEditing(true)} title="点击编辑提示词" style={{color:T.textMuted,fontSize:12,fontFamily:T.fontMono,cursor:'pointer',padding:'6px 8px',borderRadius:T.radiusSm,border:'1px solid transparent',lineHeight:1.6}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent+'44';e.currentTarget.style.background=T.surface3}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor='transparent';e.currentTarget.style.background='transparent'}}>
+            {shot.prompt_text || shot.shot_description}
+          </div>
+        )}
+      </td>
+      <td style={{padding:'14px 16px',width:80}}>
+        <span style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,padding:'4px 10px',borderRadius:999,background:s.bg,color:s.dot,fontWeight:600}}>
+          <span style={{width:6,height:6,borderRadius:'50%',background:s.dot,display:'inline-block'}}/>{s.label}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+// ── GenerationTimeline ──
+function GenerationTimeline({storyboard}) {
+  const [tasks, setTasks] = useState({generating:[], completed:[]});
+  useEffect(() => {
+    const fetchTasks = async () => {
+      try {
+        const data = await api('/generation/tasks');
+        setTasks(data);
+      } catch {}
+    };
+    fetchTasks();
+    const id = setInterval(fetchTasks, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  const statusMap = {
+    pending:{dot:T.textDim,label:'等待中',bg:T.surface2},
+    generating:{dot:T.blue,label:'生成中',bg:T.blueGlow},
+    completed:{dot:T.green,label:'已完成',bg:T.greenGlow},
+    failed:{dot:T.red,label:'失败',bg:'rgba(248,113,113,0.18)'}
+  };
+
+  return (
+    <section style={{marginTop:36}}>
+      <h2 style={{fontFamily:T.fontDisplay,fontSize:17,color:T.text,margin:'0 0 18px',fontWeight:600}}>生成任务</h2>
+      {tasks.generating.length > 0 && (
+        <div style={{marginBottom:20}}>
+          {tasks.generating.map(t => (
+            <div key={t.task_id} style={{background:T.surface1,borderRadius:T.radiusMd,border:'1px solid '+T.border,padding:16,marginBottom:10}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{fontWeight:600,color:T.text,fontSize:14}}>{t.project_title}</span>
+                <span style={{fontSize:11,padding:'3px 10px',borderRadius:999,background:T.blueGlow,color:T.blue,fontWeight:600}}>生成中</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{flex:1,height:4,background:T.surface3,borderRadius:999,overflow:'hidden'}}>
+                  <div style={{height:'100%',width:((t.progress?.done||0)/Math.max(t.progress?.total||1,1)*100)+'%',background:T.blue,borderRadius:999,transition:'width 400ms '+T.easeOut}}/>
+                </div>
+                <span style={{fontSize:11,color:T.textMuted,fontFamily:T.fontMono}}>{t.progress?.done||0}/{t.progress?.total||0}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{display:'flex',gap:16,overflowX:'auto',padding:'4px 0 8px'}}>
+        {storyboard.map(shot => {
+          const s = statusMap[shot.status] || statusMap.pending;
+          return (
+            <div key={shot.id} className="card-hover" style={{minWidth:220,maxWidth:220,background:T.surface1,borderRadius:T.radiusMd,border:'1px solid '+T.border,padding:16}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <span style={{fontFamily:T.fontMono,fontSize:12,color:T.accent,fontWeight:700}}>#{String(shot.sequence).padStart(2,'0')}</span>
+                <span style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,padding:'2px 8px',borderRadius:999,background:s.bg,color:s.dot,fontWeight:600}}>
+                  <span style={{width:5,height:5,borderRadius:'50%',background:s.dot,display:'inline-block'}}/>{s.label}
+                </span>
+              </div>
+              <div style={{height:100,background:T.surface2,borderRadius:T.radiusSm,marginBottom:10,display:'flex',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
+                {shot.status==='completed' ? (
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={T.green} strokeWidth="2">
+                    <polygon points="5,3 19,12 5,21"/>
+                  </svg>
+                ) : shot.status==='generating' ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.blue} strokeWidth="1.5" style={{animation:'spin 1.6s linear infinite'}}>
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.textDim} strokeWidth="1.5">
+                    <circle cx="12" cy="12" r="10"/>
+                  </svg>
+                )}
+              </div>
+              <p style={{fontSize:11,color:T.textMuted,margin:0,lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                {shot.shot_description}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ── CharacterPanel ──
+function CharacterPanel({characters, projectId, onClose, toast}) {
+  const [generatingFor, setGeneratingFor] = useState(null);
+  const [candidates, setCandidates] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [phase, setPhase] = useState('list');
+  const [localChars, setLocalChars] = useState(characters);
+
+  useEffect(() => {
+    const loadChars = async () => {
+      try {
+        const data = await api('/assets?type=character');
+        setLocalChars(data.map(a => ({
+          id: a.id,
+          name: a.original_name,
+          alias: a.alias_name,
+          status: 'matched',
+          thumbnail: a.image_url,
+          description: a.prompt_description
+        })));
+      } catch {}
+    };
+    if (characters.length === 0) loadChars();
+  }, []);
+
+  const handleGenerate = async (char) => {
+    setGeneratingFor(char); setPhase('generating'); setSelected(null);
+    try {
+      const data = await api('/assets/generate-character', {
+        method:'POST',
+        body:JSON.stringify({description:char.description||char.name, count:4})
+      });
+      setCandidates(data.images.map((url,i) => ({id:'gen'+i, label:'方案'+String.fromCharCode(65+i), url})));
+      setPhase('result');
+      toast('4张候选图已生成','success');
+    } catch (e) {
+      toast(e.message,'error');
+      setPhase('list');
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!selected || !generatingFor) return;
+    try {
+      await api('/assets/confirm-character', {
+        method:'POST',
+        body:JSON.stringify({
+          original_name: generatingFor.name,
+          alias_name: generatingFor.alias,
+          prompt_description: generatingFor.description || generatingFor.name,
+          image_url: candidates.find(c=>c.id===selected)?.url || '',
+          project_id: projectId
+        })
+      });
+      toast('角色人设图已确认','success');
+      onClose();
+    } catch (e) { toast(e.message,'error'); }
+  };
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key==='Escape') { if (phase==='result') setPhase('list'); else onClose(); }};
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [phase]);
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={onClose}>
+      <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(4px)'}}/>
+      <div onClick={e=>e.stopPropagation()} style={{position:'relative',width:680,maxHeight:'85vh',overflowY:'auto',background:T.surface1,borderRadius:T.radiusXl,border:'1px solid '+T.border,padding:32,boxShadow:'0 32px 96px rgba(0,0,0,0.6)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
+          <div>
+            <h2 style={{fontFamily:T.fontDisplay,fontSize:20,color:T.text,margin:0,fontWeight:700}}>角色管理面板</h2>
+            <p style={{color:T.textMuted,fontSize:13,margin:'4px 0 0'}}>角色资产匹配与生成</p>
+          </div>
+          <button onClick={onClose} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:4}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        {phase==='list' && (
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            {localChars.map(char => (
+              <div key={char.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 18px',background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+                <div style={{display:'flex',alignItems:'center',gap:14}}>
+                  <div style={{width:44,height:44,borderRadius:T.radiusSm,background:T.surface3,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+                    {char.thumbnail
+                      ? <img src={char.thumbnail} style={{width:44,height:44,objectFit:'cover'}}/>
+                      : <span style={{fontFamily:T.fontDisplay,fontSize:18,color:T.textDim}}>{char.name?.[0]}</span>
+                    }
+                  </div>
+                  <div>
+                    <div style={{color:T.text,fontWeight:600,fontSize:14}}>{char.name}</div>
+                    {char.status==='matched' && <span style={{fontSize:10,background:T.purpleGlow,color:T.purple,padding:'2px 8px',borderRadius:999,fontWeight:600}}>已匹配资产库</span>}
+                  </div>
+                </div>
+                <span style={{fontSize:12,color:T.green,fontWeight:600,display:'flex',alignItems:'center',gap:4}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.green} strokeWidth="2.5">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>已就绪
+                </span>
+              </div>
+            ))}
+            {localChars.length === 0 && (
+              <p style={{color:T.textMuted,textAlign:'center',padding:20}}>暂未识别到角色，请先上传剧本</p>
+            )}
+          </div>
+        )}
+        {phase==='generating' && (
+          <div style={{textAlign:'center',padding:'40px 20px'}}>
+            <div style={{marginBottom:20}}>
+              <svg width="56" height="56" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite',transformOrigin:'center'}}>
+                <circle cx="28" cy="28" r="24" stroke={T.surface3} strokeWidth="3" fill="none"/>
+                <circle cx="28" cy="28" r="24" stroke={T.accent} strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <p style={{color:T.text,fontWeight:600,fontSize:15}}>正在生成人设图...</p>
+          </div>
+        )}
+        {phase==='result' && (
+          <div>
+            <p style={{color:T.textMuted,fontSize:13,margin:'0 0 16px'}}>选择一张人设图</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:20}}>
+              {candidates.map(c => (
+                <div key={c.id} onClick={()=>setSelected(c.id)}
+                  style={{background:'linear-gradient(135deg,'+T.accent+'22,'+T.blue+'22)',borderRadius:T.radiusMd,border:'2px solid '+(selected===c.id?T.accent:T.border),cursor:'pointer',position:'relative',height:180,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',transition:'all 160ms '+T.easeOut}}>
+                  {c.url ? <img src={c.url} style={{maxWidth:'100%',maxHeight:140,objectFit:'contain',borderRadius:4}}/> : (
+                    <div style={{textAlign:'center'}}>
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={selected===c.id?T.accent:T.textDim} strokeWidth="1.2" style={{margin:'0 auto 8px'}}>
+                        <circle cx="12" cy="8" r="4"/>
+                        <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                      </svg>
+                      <span style={{fontSize:13,fontWeight:600,color:selected===c.id?T.accent:T.textMuted}}>{c.label}</span>
+                    </div>
+                  )}
+                  {selected===c.id && <div style={{position:'absolute',top:10,right:10,width:24,height:24,borderRadius:'50%',background:T.accent,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                  </div>}
+                </div>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setPhase('generating')} style={{background:'transparent',border:'1px solid '+T.border,borderRadius:T.radiusMd,color:T.textMuted,padding:'10px 20px',fontSize:13,fontWeight:600,cursor:'pointer'}}>重新生成</button>
+              <button onClick={handleConfirm} disabled={!selected} style={{background:selected?T.accent:T.surface3,color:selected?'#fff':T.textDim,border:'none',borderRadius:T.radiusMd,padding:'10px 24px',fontSize:13,fontWeight:700,cursor:selected?'pointer':'default',boxShadow:selected?'0 4px 16px '+T.accentGlow:'none'}}>确认选择</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── AssetDrawer ──
+function AssetDrawer({shot, onClose, toast}) {
+  const [tab, setTab] = useState('character');
+  const [assets, setAssets] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const tabs = [{id:'character',label:'角色'},{id:'costume',label:'衣着'},{id:'scene',label:'场景'}];
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await api(`/assets?type=${tab}`);
+        setAssets(data);
+      } catch { setAssets([]); }
+      finally { setLoaded(true); }
+    };
+    setLoaded(false); load();
+  }, [tab]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const handleSelect = (asset) => {
+    toast('已选用资产：'+asset.original_name,'success');
+    onClose();
+  };
+
+  const getColor = () => {
+    const colors = [T.accent+'33', T.blue+'33', T.purple+'33', T.green+'33'];
+    return 'linear-gradient(135deg,'+colors[Math.floor(Math.random()*4)]+','+colors[Math.floor(Math.random()*4)]+')';
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:1000}} onClick={onClose}>
+      <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.5)',backdropFilter:'blur(2px)'}}/>
+      <div onClick={e=>e.stopPropagation()} style={{position:'absolute',right:0,top:0,bottom:0,width:480,background:T.surface1,borderLeft:'1px solid '+T.border,display:'flex',flexDirection:'column',boxShadow:'-16px 0 64px rgba(0,0,0,0.5)'}}>
+        <div style={{padding:'24px 24px 0',borderBottom:'1px solid '+T.border}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+            <h3 style={{fontFamily:T.fontDisplay,fontSize:18,color:T.text,margin:0,fontWeight:700}}>资产库</h3>
+            <button onClick={onClose} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:4}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div style={{display:'flex',gap:0}}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={()=>setTab(t.id)}
+                style={{background:'transparent',border:'none',borderBottom:'2px solid '+(tab===t.id?T.accent:'transparent'),color:tab===t.id?T.text:T.textMuted,padding:'8px 20px',fontSize:13,fontWeight:tab===t.id?700:500,cursor:'pointer',transition:'all 160ms '+T.easeOut}}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:20,display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,alignContent:'start'}}>
+          {!loaded ? <p style={{color:T.textDim,gridColumn:'1/-1',textAlign:'center'}}>加载中...</p> :
+           assets.length === 0 ? <p style={{color:T.textDim,gridColumn:'1/-1',textAlign:'center',padding:40}}>暂无资产</p> :
+           assets.map(a => (
+            <div key={a.id} className="card-hover" style={{background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border,overflow:'hidden'}}>
+              <div style={{height:100,background:getColor(),display:'flex',alignItems:'center',justifyContent:'center',position:'relative'}}>
+                {a.image_url
+                  ? <img src={a.image_url} style={{width:'100%',height:100,objectFit:'cover'}}/>
+                  : <span style={{fontSize:28,fontFamily:T.fontDisplay,color:T.text+'44'}}>{a.original_name[0]}</span>
+                }
+              </div>
+              <div style={{padding:12}}>
+                <p style={{color:T.text,fontSize:12,fontWeight:600,margin:'0 0 4px'}}>{a.original_name}</p>
+                <p style={{color:T.textDim,fontSize:10,lineHeight:1.4,margin:'0 0 10px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.prompt_description}</p>
+                <button onClick={()=>handleSelect(a)} style={{width:'100%',background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusSm,padding:'6px 0',fontSize:11,fontWeight:700,cursor:'pointer'}}>选用</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:'12px 24px',borderTop:'1px solid '+T.border,fontSize:11,color:T.textDim}}>
+          {shot ? `当前分镜：#${String(shot.sequence||'').padStart(2,'0')}` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AssetsView ──
+function AssetsView() {
+  const toast = useToast();
+  const [tab, setTab] = useState('character');
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const tabs = [{id:'character',label:'角色资产'},{id:'costume',label:'衣着资产'},{id:'scene',label:'场景资产'}];
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const data = await api(`/assets?type=${tab}`);
+        setAssets(data);
+      } catch { setAssets([]); }
+      finally { setLoading(false); }
+    };
+    load();
+  }, [tab]);
+
+  return (
+    <main style={{padding:'40px 40px 60px',maxWidth:1280,margin:'0 auto'}}>
+      <h1 style={{fontFamily:T.fontDisplay,fontSize:28,fontWeight:700,color:T.text,margin:'0 0 6px'}}>我的资产库</h1>
+      <p style={{color:T.textMuted,fontSize:14,margin:'0 0 28px'}}>管理已生成的角色、衣着与场景资产</p>
+      <div style={{display:'flex',gap:6,marginBottom:28}}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:tab===t.id?T.accent:T.surface2,border:'none',color:tab===t.id?'#fff':T.textMuted,padding:'10px 22px',borderRadius:T.radiusMd,fontSize:13,fontWeight:tab===t.id?700:500,cursor:'pointer'}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))',gap:18}}>
+        {loading ? <p style={{color:T.textDim,gridColumn:'1/-1',textAlign:'center',padding:40}}>加载中...</p> :
+         assets.length === 0 ? <p style={{color:T.textDim,gridColumn:'1/-1',textAlign:'center',padding:40}}>暂无资产，请先生成角色人设图</p> :
+         assets.map(a => (
+          <div key={a.id} className="card-hover" style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,overflow:'hidden'}}>
+            <div style={{height:160,background:'linear-gradient(135deg,'+T.purple+'22,'+T.accent+'22)',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',overflow:'hidden'}}>
+              {a.image_url
+                ? <img src={a.image_url} style={{width:'100%',height:160,objectFit:'cover'}}/>
+                : <span style={{fontSize:40,fontFamily:T.fontDisplay,color:T.text+'44'}}>{a.original_name[0]}</span>
+              }
+            </div>
+            <div style={{padding:'14px 16px 16px'}}>
+              <p style={{color:T.text,fontSize:13,fontWeight:600,margin:'0 0 4px'}}>{a.original_name}</p>
+              <p style={{color:T.textDim,fontSize:11,lineHeight:1.4,margin:'0 0 10px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.alias_name}</p>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontSize:10,color:T.textDim}}>{a.created_at ? new Date(a.created_at).toLocaleDateString('zh-CN') : ''}</span>
+                <button onClick={()=>{navigator.clipboard.writeText(a.alias_name); toast('已复制引: '+a.alias_name,'success');}}
+                  style={{background:'transparent',border:'1px solid '+T.border,borderRadius:T.radiusSm,color:T.textMuted,fontSize:10,padding:'4px 10px',cursor:'pointer'}}>复制引用</button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+// ── ProfileView ──
+function ProfileView({user}) {
+  const toast = useToast();
+  const [name, setName] = useState(user?.name||'');
+  const [stats, setStats] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  const [llmProtocol, setLlmProtocol] = useState('ark');
+  const [seedreamProtocol, setSeedreamProtocol] = useState('ark');
+  const [seedanceProtocol, setSeedanceProtocol] = useState('ark');
+  const [llmUrl, setLlmUrl] = useState('');
+  const [llmKey, setLlmKey] = useState('');
+  const [llmModelSonnet, setLlmModelSonnet] = useState('');
+  const [llmModelHaiku, setLlmModelHaiku] = useState('');
+  const [seedreamUrl, setSeedreamUrl] = useState('');
+  const [seedreamKey, setSeedreamKey] = useState('');
+  const [seedreamModel, setSeedreamModel] = useState('');
+  const [seedanceUrl, setSeedanceUrl] = useState('');
+  const [seedanceKey, setSeedanceKey] = useState('');
+  const [seedanceModel, setSeedanceModel] = useState('');
+
+  // 修改密码相关状态
+  const [passwordMode, setPasswordMode] = useState('old'); // 'old' 或 'code'
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [codeSending, setCodeSending] = useState(false);
+  const [codeCountdown, setCodeCountdown] = useState(0);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const projects = await api('/projects');
+        setStats({projectCount: projects.length});
+        const userSettings = await api('/user/settings');
+        setSettings(userSettings);
+        setLlmProtocol(userSettings.llm_api_type || 'ark');
+        setLlmUrl(userSettings.llm_base_url || '');
+        setLlmModelSonnet(userSettings.llm_model_main || '');
+        setLlmModelHaiku(userSettings.llm_model_fast || '');
+        setSeedreamProtocol(userSettings.seedream_api_type || 'ark');
+        setSeedreamUrl(userSettings.seedream_base_url || '');
+        setSeedreamModel(userSettings.seedream_model || '');
+        setSeedanceProtocol(userSettings.seedance_api_type || 'ark');
+        setSeedanceUrl(userSettings.seedance_base_url || '');
+        setSeedanceModel(userSettings.seedance_model || '');
+      } catch {}
+    };
+    load();
+  }, []);
+
+  // 验证码倒计时
+  useEffect(() => {
+    if (codeCountdown > 0) {
+      const timer = setTimeout(() => setCodeCountdown(codeCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [codeCountdown]);
+
+  const handleSave = () => {
+    const u = getUser();
+    if (u) { u.name = name; localStorage.setItem('user', JSON.stringify(u)); }
+    toast('信息已保存','success');
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      const payload = {
+        llm_api_type: llmProtocol || null,
+        llm_base_url: llmUrl || null,
+        llm_model_main: llmModelSonnet || null,
+        llm_model_fast: llmModelHaiku || null,
+        seedream_api_type: seedreamProtocol || null,
+        seedream_base_url: seedreamUrl || null,
+        seedream_model: seedreamModel || null,
+        seedance_api_type: seedanceProtocol || null,
+        seedance_base_url: seedanceUrl || null,
+        seedance_model: seedanceModel || null,
+      };
+      if (llmKey.trim()) payload.llm_api_key = llmKey.trim();
+      if (seedreamKey.trim()) payload.seedream_api_key = seedreamKey.trim();
+      if (seedanceKey.trim()) payload.seedance_api_key = seedanceKey.trim();
+      await api('/user/settings', {method:'PUT', body:JSON.stringify(payload)});
+      toast('API配置已保存','success');
+      setLlmKey('');
+      setSeedreamKey('');
+      setSeedanceKey('');
+      const userSettings = await api('/user/settings');
+      setSettings(userSettings);
+      setLlmProtocol(userSettings.llm_api_type || 'ark');
+      setSeedreamProtocol(userSettings.seedream_api_type || 'ark');
+      setSeedanceProtocol(userSettings.seedance_api_type || 'ark');
+    } catch (e) {
+      toast(e.message,'error');
+    }
+  };
+
+  const handleSendCode = async () => {
+    if (codeSending || codeCountdown > 0) return;
+    try {
+      setCodeSending(true);
+      await api('/auth/send-code', {method:'POST', body:JSON.stringify({email: user.email})});
+      toast('验证码已发送到您的邮箱','success');
+      setCodeCountdown(60);
+    } catch (e) {
+      toast(e.message,'error');
+    } finally {
+      setCodeSending(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (newPassword.length < 6) {
+      toast('新密码长度至少为6个字符','error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast('两次输入的密码不一致','error');
+      return;
+    }
+
+    try {
+      const payload = {new_password: newPassword};
+      if (passwordMode === 'old') {
+        if (!oldPassword) {
+          toast('请输入旧密码','error');
+          return;
+        }
+        payload.old_password = oldPassword;
+      } else {
+        if (!verificationCode) {
+          toast('请输入验证码','error');
+          return;
+        }
+        payload.verification_code = verificationCode;
+      }
+
+      await api('/user/change-password', {method:'POST', body:JSON.stringify(payload)});
+      toast('密码修改成功','success');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setVerificationCode('');
+    } catch (e) {
+      toast(e.message,'error');
+    }
+  };
+
+  return (
+    <main style={{padding:'40px 40px 60px',maxWidth:720,margin:'0 auto'}}>
+      <h1 style={{fontFamily:T.fontDisplay,fontSize:28,fontWeight:700,color:T.text,margin:'0 0 32px'}}>个人中心</h1>
+      <section style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,padding:32,marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',gap:18,marginBottom:28}}>
+          <div style={{width:64,height:64,borderRadius:'50%',background:'linear-gradient(135deg,'+T.accent+','+T.purple+')',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <span style={{fontSize:24,fontFamily:T.fontDisplay,color:'#fff',fontWeight:700}}>{user?.name?.[0]||'?'}</span>
+          </div>
+          <div>
+            <h2 style={{color:T.text,fontWeight:600,fontSize:18,margin:'0 0 4px'}}>{user?.name||''}</h2>
+            <span style={{color:T.textMuted,fontSize:13}}>{user?.email||''}</span>
+          </div>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:16}}>
+          <div>
+            <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>显示名称</label>
+            <input value={name} onChange={e=>setName(e.target.value)}
+              style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+          </div>
+          <div>
+            <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>邮箱</label>
+            <input value={user?.email||''} disabled style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.textDim,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+          </div>
+          <button onClick={handleSave} style={{background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'12px 28px',fontSize:14,fontWeight:700,cursor:'pointer',alignSelf:'flex-start',boxShadow:'0 4px 16px '+T.accentGlow}}>保存修改</button>
+        </div>
+      </section>
+
+      <section style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,padding:32,marginBottom:20}}>
+        <h3 style={{color:T.text,fontWeight:600,fontSize:16,margin:'0 0 8px'}}>API配置</h3>
+        <p style={{color:T.textMuted,fontSize:13,margin:'0 0 24px'}}>配置您自己的API服务。请选择API协议类型并填写对应的URL、密钥和模型名称。</p>
+
+        <div style={{display:'flex',flexDirection:'column',gap:20}}>
+          <div style={{padding:20,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+            <h4 style={{color:T.text,fontSize:14,fontWeight:600,margin:'0 0 12px'}}>LLM服务</h4>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API协议类型</label>
+                <select value={llmProtocol} onChange={e=>setLlmProtocol(e.target.value)}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}>
+                  <option value="claude">Claude API (Anthropic官方)</option>
+                  <option value="openai">OpenAI兼容格式</option>
+                  <option value="ark">火山方舟 (Volcengine)</option>
+                </select>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API地址</label>
+                <input value={llmUrl} onChange={e=>setLlmUrl(e.target.value)}
+                  placeholder={llmProtocol==='claude'?'https://api.anthropic.com':llmProtocol==='ark'?'https://ark.cn-beijing.volces.com/api/v3':'https://api.openai.com/v1'}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API密钥 {settings?.llm_api_key_configured && <span style={{color:T.green}}>✓ 已配置</span>}</label>
+                <input type={showApiKeys?"text":"password"} value={llmKey} onChange={e=>setLlmKey(e.target.value)} placeholder="输入API密钥"
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                <div>
+                  <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>Sonnet模型名称</label>
+                  <input value={llmModelSonnet} onChange={e=>setLlmModelSonnet(e.target.value)}
+                    placeholder={llmProtocol==='claude'?'claude-sonnet-4-6':llmProtocol==='ark'?'doubao-seed-2-0-mini-260428':'gpt-4'}
+                    style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>Haiku模型名称</label>
+                  <input value={llmModelHaiku} onChange={e=>setLlmModelHaiku(e.target.value)}
+                    placeholder={llmProtocol==='claude'?'claude-haiku-4-5':llmProtocol==='ark'?'doubao-seed-2-0-lite-260428':'gpt-3.5-turbo'}
+                    style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{padding:20,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+            <h4 style={{color:T.text,fontSize:14,fontWeight:600,margin:'0 0 12px'}}>Seedream (图片生成)</h4>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API协议类型</label>
+                <select value={seedreamProtocol} onChange={e=>setSeedreamProtocol(e.target.value)}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}>
+                  <option value="ark">火山方舟 (Volcengine)</option>
+                  <option value="openai">OpenAI兼容格式</option>
+                </select>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API地址</label>
+                <input value={seedreamUrl} onChange={e=>setSeedreamUrl(e.target.value)} placeholder={seedreamProtocol==='ark'?'https://ark.cn-beijing.volces.com/api/v3/images/generations':'https://api.openai.com/v1/images/generations'}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API密钥 {settings?.seedream_api_key_configured && <span style={{color:T.green}}>✓ 已配置</span>}</label>
+                <input type={showApiKeys?"text":"password"} value={seedreamKey} onChange={e=>setSeedreamKey(e.target.value)} placeholder="输入API密钥"
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>模型名称</label>
+                <input value={seedreamModel} onChange={e=>setSeedreamModel(e.target.value)} placeholder="seedream-5.0-lite 或 ep-xxxxx-xxxxx"
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+            </div>
+          </div>
+
+          <div style={{padding:20,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+            <h4 style={{color:T.text,fontSize:14,fontWeight:600,margin:'0 0 12px'}}>Seedance (视频生成)</h4>
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API协议类型</label>
+                <select value={seedanceProtocol} onChange={e=>setSeedanceProtocol(e.target.value)}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}>
+                  <option value="ark">火山方舟 (Volcengine)</option>
+                  <option value="custom">自定义接口</option>
+                </select>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API地址</label>
+                <input value={seedanceUrl} onChange={e=>setSeedanceUrl(e.target.value)} placeholder={seedanceProtocol==='ark'?'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks':'输入自定义视频生成接口地址'}
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>API密钥 {settings?.seedance_api_key_configured && <span style={{color:T.green}}>✓ 已配置</span>}</label>
+                <input type={showApiKeys?"text":"password"} value={seedanceKey} onChange={e=>setSeedanceKey(e.target.value)} placeholder="输入API密钥"
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6}}>模型名称</label>
+                <input value={seedanceModel} onChange={e=>setSeedanceModel(e.target.value)} placeholder="seedance-2.0 或 ep-xxxxx-xxxxx"
+                  style={{width:'100%',background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,padding:'10px 12px',color:T.text,fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:'flex',gap:12,alignItems:'center'}}>
+            <button onClick={handleSaveSettings} style={{background:T.accent,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'12px 28px',fontSize:14,fontWeight:700,cursor:'pointer',boxShadow:'0 4px 16px '+T.accentGlow}}>保存API配置</button>
+            <button onClick={()=>setShowApiKeys(!showApiKeys)} style={{background:T.surface2,color:T.text,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 20px',fontSize:13,fontWeight:500,cursor:'pointer'}}>
+              {showApiKeys ? '隐藏密钥' : '显示密钥'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,padding:32,marginBottom:20}}>
+        <h3 style={{color:T.text,fontWeight:600,fontSize:16,margin:'0 0 8px'}}>修改密码</h3>
+        <p style={{color:T.textMuted,fontSize:13,margin:'0 0 24px'}}>您可以使用旧密码或邮箱验证码来修改密码。</p>
+
+        <div style={{display:'flex',gap:12,marginBottom:20}}>
+          <button
+            onClick={() => setPasswordMode('old')}
+            style={{
+              padding:'8px 16px',
+              fontSize:13,
+              fontWeight:500,
+              border:'1px solid '+(passwordMode==='old'?T.accent:T.border),
+              background:passwordMode==='old'?T.accentGlow:T.surface2,
+              color:passwordMode==='old'?T.accent:T.text,
+              borderRadius:T.radiusSm,
+              cursor:'pointer'
+            }}>
+            使用旧密码
+          </button>
+          <button
+            onClick={() => setPasswordMode('code')}
+            style={{
+              padding:'8px 16px',
+              fontSize:13,
+              fontWeight:500,
+              border:'1px solid '+(passwordMode==='code'?T.accent:T.border),
+              background:passwordMode==='code'?T.accentGlow:T.surface2,
+              color:passwordMode==='code'?T.accent:T.text,
+              borderRadius:T.radiusSm,
+              cursor:'pointer'
+            }}>
+            使用邮箱验证码
+          </button>
+        </div>
+
+        <div style={{display:'flex',flexDirection:'column',gap:16}}>
+          {passwordMode === 'old' ? (
+            <div>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>旧密码</label>
+              <input
+                type="password"
+                value={oldPassword}
+                onChange={e=>setOldPassword(e.target.value)}
+                placeholder="请输入旧密码"
+                style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+            </div>
+          ) : (
+            <div>
+              <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>邮箱验证码</label>
+              <div style={{display:'flex',gap:12}}>
+                <input
+                  type="text"
+                  value={verificationCode}
+                  onChange={e=>setVerificationCode(e.target.value)}
+                  placeholder="请输入验证码"
+                  style={{flex:1,background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+                <button
+                  onClick={handleSendCode}
+                  disabled={codeSending || codeCountdown > 0}
+                  style={{
+                    background:codeSending||codeCountdown>0?T.surface2:T.blue,
+                    color:codeSending||codeCountdown>0?T.textMuted:'#fff',
+                    border:'none',
+                    borderRadius:T.radiusMd,
+                    padding:'12px 20px',
+                    fontSize:13,
+                    fontWeight:600,
+                    cursor:codeSending||codeCountdown>0?'not-allowed':'pointer',
+                    whiteSpace:'nowrap'
+                  }}>
+                  {codeCountdown > 0 ? `${codeCountdown}秒后重试` : codeSending ? '发送中...' : '发送验证码'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>新密码</label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={e=>setNewPassword(e.target.value)}
+              placeholder="请输入新密码（至少6个字符）"
+              style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+          </div>
+
+          <div>
+            <label style={{display:'block',color:T.textMuted,fontSize:12,marginBottom:6,fontWeight:500}}>确认新密码</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={e=>setConfirmPassword(e.target.value)}
+              placeholder="请再次输入新密码"
+              style={{width:'100%',background:T.surface2,border:'1px solid '+T.border,borderRadius:T.radiusMd,padding:'12px 14px',color:T.text,fontSize:14,outline:'none',boxSizing:'border-box'}}/>
+          </div>
+
+          <button
+            onClick={handleChangePassword}
+            style={{
+              background:T.accent,
+              color:'#fff',
+              border:'none',
+              borderRadius:T.radiusMd,
+              padding:'12px 28px',
+              fontSize:14,
+              fontWeight:700,
+              cursor:'pointer',
+              alignSelf:'flex-start',
+              boxShadow:'0 4px 16px '+T.accentGlow
+            }}>
+            确认修改
+          </button>
+        </div>
+      </section>
+
+      <section style={{background:T.surface1,borderRadius:T.radiusLg,border:'1px solid '+T.border,padding:32}}>
+        <h3 style={{color:T.text,fontWeight:600,fontSize:16,margin:'0 0 16px'}}>用量统计</h3>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:20}}>
+          <div style={{padding:16,background:T.surface2,borderRadius:T.radiusMd}}>
+            <div style={{fontFamily:T.fontMono,fontSize:28,color:T.text,fontWeight:700}}>{stats?.projectCount||0}</div>
+            <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>剧本总数</div>
+          </div>
+          <div style={{padding:16,background:T.surface2,borderRadius:T.radiusMd}}>
+            <div style={{fontFamily:T.fontMono,fontSize:28,color:T.text,fontWeight:700}}>-</div>
+            <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>本月生成次数</div>
+          </div>
+          <div style={{padding:16,background:T.surface2,borderRadius:T.radiusMd}}>
+            <div style={{fontFamily:T.fontMono,fontSize:28,color:T.text,fontWeight:700}}>-</div>
+            <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>资产总数</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+// ── AssetWorkflowView ──
+function AssetWorkflowView({project, scriptId, onBack, onComplete}) {
+  const toast = useToast();
+  const [activeTab, setActiveTab] = useState('character');
+  const [characters, setCharacters] = useState([]);
+  const [scenes, setScenes] = useState([]);
+  const [items, setItems] = useState([]);
+  const [costumes, setCostumes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extracted, setExtracted] = useState(false);
+  const [generatingPromptFor, setGeneratingPromptFor] = useState(null);
+  const [generatingImageFor, setGeneratingImageFor] = useState(null);
+  const [expandedCard, setExpandedCard] = useState(null);
+
+  useEffect(() => {
+    loadAllAssets();
+  }, [scriptId]);
+
+  const loadAllAssets = async () => {
+    setLoading(true);
+    try {
+      const [chars, scns, itms, cstms] = await Promise.all([
+        api(`/characters/scripts/${scriptId}/list`).catch(() => []),
+        api(`/asset-management/scripts/${scriptId}/scenes`).catch(() => []),
+        api(`/asset-management/scripts/${scriptId}/items`).catch(() => []),
+        api(`/asset-management/scripts/${scriptId}/costumes`).catch(() => [])
+      ]);
+      console.log('=== Assets loaded ===');
+      console.log('Characters:', chars);
+      console.log('Scenes:', scns);
+      console.log('Items:', itms);
+      console.log('Costumes:', cstms);
+      setCharacters(chars);
+      setScenes(scns);
+      setItems(itms);
+      setCostumes(cstms);
+      setExtracted(chars.length > 0 || scns.length > 0 || itms.length > 0 || cstms.length > 0);
+    } catch (e) {
+      console.error('Load assets error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExtractAssets = async () => {
+    setExtracting(true);
+    try {
+      const result = await api(`/asset-management/scripts/${scriptId}/extract-assets`, {
+        method: 'POST'
+      });
+      toast('资产提取成功', 'success');
+      if (result.warnings && result.warnings.length > 0) {
+        setTimeout(() => {
+          result.warnings.forEach(warning => {
+            toast(warning, 'warning');
+          });
+        }, 500);
+      }
+      await loadAllAssets();
+    } catch (e) {
+      console.error('Extract assets error:', e);
+      toast(e.message || '提取失败', 'error');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const handleGeneratePrompt = async (asset, type) => {
+    setGeneratingPromptFor(asset.id);
+    try {
+      await api('/asset-management/generate-prompt', {
+        method: 'POST',
+        body: JSON.stringify({
+          asset_type: type,
+          asset_id: asset.id,
+          asset_name: asset.name || asset.original_name,
+          asset_description: asset.description || '',
+          additional_context: null
+        })
+      });
+      toast('提示词已生成', 'success');
+      await loadAllAssets();
+    } catch (e) {
+      console.error('Generate prompt error:', e);
+      toast(e.message || '生成失败', 'error');
+    } finally {
+      setGeneratingPromptFor(null);
+    }
+  };
+
+  const handleGenerateImage = async (asset, type) => {
+    setGeneratingImageFor(asset.id);
+    setExpandedCard(asset.id); // 自动展开卡片
+    try {
+      if (type === 'character') {
+        await api(`/characters/${asset.id}/generate-images`, {
+          method: 'POST'
+        });
+        toast('人设图生成已启动', 'success');
+      } else {
+        const result = await api('/generation-tasks', {
+          method: 'POST',
+          body: JSON.stringify({
+            task_type: type === 'scene' ? 'scene_image' : type === 'item' ? 'item_image' : 'costume_image',
+            prompt: asset.image_prompt || asset.reference_prompt || asset.description,
+            metadata: { target_id: asset.id }
+          })
+        });
+        await api(`/generation-tasks/${result.id}/start`, { method: 'POST' });
+        toast('图像生成已启动', 'success');
+      }
+      setTimeout(() => loadAllAssets(), 3000);
+    } catch (e) {
+      console.error('Generate image error:', e);
+      toast(e.message || '生成失败', 'error');
+    } finally {
+      setGeneratingImageFor(null);
+    }
+  };
+
+  const handleSelectImage = async (asset, imageIndex, type) => {
+    try {
+      let endpoint;
+      if (type === 'character') {
+        endpoint = `/characters/${asset.id}/select-image`;
+      } else if (type === 'scene') {
+        endpoint = `/asset-management/scenes/${asset.id}/select-image`;
+      } else if (type === 'item') {
+        endpoint = `/asset-management/items/${asset.id}/select-image`;
+      } else if (type === 'costume') {
+        endpoint = `/asset-management/costumes/${asset.id}/select-image`;
+      }
+
+      if (endpoint) {
+        await api(endpoint, {
+          method: 'POST',
+          body: JSON.stringify({ image_index: imageIndex })
+        });
+        toast('图像已选择', 'success');
+        await loadAllAssets();
+      }
+    } catch (e) {
+      console.error('Select image error:', e);
+      toast(e.message || '选择失败', 'error');
+    }
+  };
+
+  const getAssets = () => {
+    if (activeTab === 'character') return characters;
+    if (activeTab === 'scene') return scenes;
+    if (activeTab === 'item') return items;
+    if (activeTab === 'costume') return costumes;
+    return [];
+  };
+
+  const getStats = (assets) => {
+    const total = assets.length;
+    const completed = assets.filter(a => a.generation_status === 'completed').length;
+    const generating = assets.filter(a => a.generation_status === 'generating').length;
+    const failed = assets.filter(a => a.generation_status === 'failed').length;
+    return { total, completed, generating, failed };
+  };
+
+  const currentAssets = getAssets();
+  const stats = getStats(currentAssets);
+
+  return (
+    <main style={{padding:'32px 48px',maxWidth:1400,margin:'0 auto'}}>
+      {/* 头部 */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:32}}>
+        <div style={{display:'flex',alignItems:'center',gap:16}}>
+          <button onClick={onBack} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:8}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div>
+            <h1 style={{fontFamily:T.fontDisplay,fontSize:28,color:T.text,margin:0,fontWeight:700}}>资产管理</h1>
+            <p style={{color:T.textMuted,fontSize:14,margin:'4px 0 0'}}>{project.name}</p>
+          </div>
+        </div>
+        <button
+          onClick={onComplete}
+          style={{background:T.blue,color:'#fff',border:'none',borderRadius:T.radiusMd,padding:'12px 24px',fontSize:14,fontWeight:700,cursor:'pointer'}}>
+          进入下一步
+        </button>
+      </div>
+
+      {/* 提示信息 */}
+      {extracted && (
+        <div style={{background:T.blueGlow,border:'1px solid '+T.blue,borderRadius:T.radiusMd,padding:'12px 16px',marginBottom:24,display:'flex',alignItems:'center',gap:12}}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.blue} strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4M12 8h.01"/>
+          </svg>
+          <span style={{color:T.text,fontSize:14}}>
+            请确保角色、场景及道具已全部提取完成，点击角色卡可配置音色，未配置音色将不代表该角色可用。直接跳过该步骤将无法使用资产库中的资产。
+          </span>
+        </div>
+      )}
+
+      {/* 提取资产按钮 */}
+      {!extracted && (
+        <div style={{textAlign:'center',padding:'60px 20px'}}>
+          <div style={{marginBottom:24}}>
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={T.blue} strokeWidth="1.5" style={{margin:'0 auto'}}>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </div>
+          <h3 style={{color:T.text,fontSize:18,fontWeight:600,marginBottom:12}}>提取资产</h3>
+          <p style={{color:T.textMuted,fontSize:14,marginBottom:32,lineHeight:1.6}}>
+            系统将使用AI从剧本中自动提取角色、场景、道具、服装等资产信息
+          </p>
+          <button
+            onClick={handleExtractAssets}
+            disabled={extracting}
+            style={{background:extracting?T.surface3:T.blue,color:extracting?T.textDim:'#fff',border:'none',borderRadius:T.radiusMd,padding:'14px 32px',fontSize:14,fontWeight:700,cursor:extracting?'default':'pointer'}}>
+            {extracting ? '提取中...' : '开始提取'}
+          </button>
+        </div>
+      )}
+
+      {/* 标签页和内容 */}
+      {extracted && (
+        <>
+          {/* 标签页 */}
+          <div style={{display:'flex',gap:24,borderBottom:'2px solid '+T.border,marginBottom:24}}>
+            {[
+              {key: 'character', label: '角色', count: characters.length},
+              {key: 'scene', label: '场景', count: scenes.length},
+              {key: 'item', label: '道具', count: items.length},
+              {key: 'costume', label: '服装', count: costumes.length}
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                style={{background:'transparent',border:'none',padding:'12px 0',fontSize:15,fontWeight:600,color:activeTab===tab.key?T.blue:T.textMuted,cursor:'pointer',position:'relative',borderBottom:activeTab===tab.key?'2px solid '+T.blue:'none',marginBottom:-2}}>
+                {tab.label}
+                <span style={{marginLeft:8,fontSize:12,padding:'2px 8px',borderRadius:999,background:activeTab===tab.key?T.blueGlow:T.surface2,color:activeTab===tab.key?T.blue:T.textDim}}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* 统计信息 */}
+          <div style={{display:'flex',gap:16,marginBottom:24}}>
+            <div style={{flex:1,padding:16,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+              <div style={{fontSize:24,fontWeight:700,color:T.text,fontFamily:T.fontMono}}>总计 {stats.total}</div>
+              <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>已完成 {stats.completed}</div>
+            </div>
+            <div style={{flex:1,padding:16,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+              <div style={{fontSize:24,fontWeight:700,color:T.blue,fontFamily:T.fontMono}}>生成中 {stats.generating}</div>
+              <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>正在处理</div>
+            </div>
+            <div style={{flex:1,padding:16,background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+              <div style={{fontSize:24,fontWeight:700,color:T.red,fontFamily:T.fontMono}}>生成失败 {stats.failed}</div>
+              <div style={{fontSize:12,color:T.textMuted,marginTop:4}}>需要重试</div>
+            </div>
+          </div>
+
+          {/* 资产列表 */}
+          {loading ? (
+            <div style={{textAlign:'center',padding:'40px 20px'}}>
+              <svg width="56" height="56" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite',margin:'0 auto 20px'}}>
+                <circle cx="28" cy="28" r="24" stroke={T.surface3} strokeWidth="3" fill="none"/>
+                <circle cx="28" cy="28" r="24" stroke={T.blue} strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+              </svg>
+              <p style={{color:T.textMuted,fontSize:14}}>加载中...</p>
+            </div>
+          ) : currentAssets.length === 0 ? (
+            <div style={{textAlign:'center',padding:'40px 20px'}}>
+              <p style={{color:T.textMuted,fontSize:14}}>暂无资产</p>
+            </div>
+          ) : (
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))',gap:16}}>
+              {currentAssets.map(asset => {
+                const isExpanded = expandedCard === asset.id;
+                return (
+                <div
+                  key={asset.id}
+                  onClick={() => setExpandedCard(isExpanded ? null : asset.id)}
+                  style={{
+                    padding:20,
+                    background:T.surface2,
+                    borderRadius:T.radiusMd,
+                    border:'1px solid '+(isExpanded ? T.blue : T.border),
+                    cursor:'pointer',
+                    transition:'all 0.2s ease',
+                    boxShadow: isExpanded ? '0 4px 12px rgba(0,0,0,0.15)' : 'none'
+                  }}>
+                  {/* 资产名称和状态 */}
+                  <div style={{marginBottom:12}}>
+                    <h4 style={{color:T.text,fontSize:15,fontWeight:600,margin:'0 0 6px'}}>{asset.name || asset.original_name}</h4>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      {asset.generation_status === 'pending' && (
+                        <span style={{fontSize:11,padding:'4px 8px',borderRadius:999,background:T.surface3,color:T.textDim,fontWeight:600}}>待生成</span>
+                      )}
+                      {asset.generation_status === 'generating' && (
+                        <span style={{fontSize:11,padding:'4px 8px',borderRadius:999,background:T.blueGlow,color:T.blue,fontWeight:600}}>生成中</span>
+                      )}
+                      {asset.generation_status === 'completed' && (
+                        <span style={{fontSize:11,padding:'4px 8px',borderRadius:999,background:T.greenGlow,color:T.green,fontWeight:600}}>已完成</span>
+                      )}
+                      {asset.generation_status === 'failed' && (
+                        <span style={{fontSize:11,padding:'4px 8px',borderRadius:999,background:'rgba(248,113,113,0.18)',color:T.red,fontWeight:600}}>失败</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 服装显示所属角色 */}
+                  {activeTab === 'costume' && asset.character_name && (
+                    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,padding:'6px 10px',background:T.surface3,borderRadius:T.radiusSm}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.purple} strokeWidth="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                        <circle cx="12" cy="7" r="4"/>
+                      </svg>
+                      <span style={{color:T.purple,fontSize:12,fontWeight:600}}>
+                        {asset.character_name}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 描述 */}
+                  <p style={{color:T.textMuted,fontSize:13,margin:'0 0 12px',lineHeight:1.5,minHeight:40}}>{asset.description}</p>
+
+                  {/* 提示词 */}
+                  {(asset.image_prompt || asset.reference_prompt) && (
+                    <div style={{padding:10,background:T.surface3,borderRadius:T.radiusSm,marginBottom:12}}>
+                      <div style={{fontSize:11,color:T.textDim,marginBottom:4,fontWeight:600}}>提示词</div>
+                      <p style={{color:T.textMuted,fontSize:12,margin:0,fontFamily:T.fontMono,lineHeight:1.4,maxHeight:isExpanded ? 'none' : 60,overflow:isExpanded ? 'visible' : 'hidden',textOverflow:'ellipsis'}}>
+                        {asset.image_prompt || asset.reference_prompt}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* 操作按钮 */}
+                  <div style={{display:'flex',gap:8}} onClick={(e) => e.stopPropagation()}>
+                    {!(asset.image_prompt || asset.reference_prompt) && (
+                      <button
+                        onClick={() => handleGeneratePrompt(asset, activeTab)}
+                        disabled={generatingPromptFor === asset.id}
+                        style={{flex:1,background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,color:T.text,padding:'8px 12px',fontSize:12,fontWeight:600,cursor:generatingPromptFor===asset.id?'default':'pointer'}}>
+                        {generatingPromptFor === asset.id ? '生成中...' : '生成提示词'}
+                      </button>
+                    )}
+                    {(asset.image_prompt || asset.reference_prompt) && asset.generation_status !== 'completed' && (
+                      <button
+                        onClick={() => handleGenerateImage(asset, activeTab)}
+                        disabled={generatingImageFor === asset.id}
+                        style={{flex:1,background:generatingImageFor===asset.id?T.surface3:T.blue,color:generatingImageFor===asset.id?T.textDim:'#fff',border:'none',borderRadius:T.radiusSm,padding:'8px 12px',fontSize:12,fontWeight:600,cursor:generatingImageFor===asset.id?'default':'pointer'}}>
+                        {generatingImageFor === asset.id ? '生成中...' : '生成图像'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 展开内容：生成进度和预览图 */}
+                  {isExpanded && (
+                    <div style={{marginTop:16,paddingTop:16,borderTop:'1px solid '+T.border}}>
+                      {/* 候选图片区域 */}
+                      {(asset.generation_status === 'generating' || asset.candidate_images_json) && (
+                        <div>
+                          <div style={{fontSize:12,color:T.textDim,marginBottom:8,fontWeight:600}}>
+                            {asset.generation_status === 'generating' ? '正在生成候选图...' : '候选图片（点击选择）'}
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'repeat(2, 1fr)',gap:8}}>
+                            {/* 生成中：显示4个占位符 */}
+                            {asset.generation_status === 'generating' && !asset.candidate_images_json && (
+                              <>
+                                {[0,1,2,3].map(idx => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      height:120,
+                                      background:T.surface3,
+                                      borderRadius:T.radiusSm,
+                                      border:'1px solid '+T.border,
+                                      display:'flex',
+                                      alignItems:'center',
+                                      justifyContent:'center'
+                                    }}>
+                                    <svg width="32" height="32" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite'}}>
+                                      <circle cx="28" cy="28" r="24" stroke={T.surface3} strokeWidth="3" fill="none"/>
+                                      <circle cx="28" cy="28" r="24" stroke={T.blue} strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+                                    </svg>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+
+                            {/* 生成完成：显示候选图 */}
+                            {asset.candidate_images_json && asset.candidate_images_json.length > 0 && (
+                              <>
+                                {asset.candidate_images_json.map((imgPath, idx) => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      position:'relative',
+                                      borderRadius:T.radiusSm,
+                                      overflow:'hidden',
+                                      border: asset.reference_image_path === imgPath ? '2px solid '+T.blue : '1px solid '+T.border,
+                                      transition:'all 0.2s ease'
+                                    }}>
+                                    {/* 缩略图 - 点击放大 */}
+                                    <img
+                                      src={imgPath}
+                                      style={{width:'100%',height:120,objectFit:'cover',display:'block',cursor:'pointer'}}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPreviewImage(imgPath);
+                                      }}
+                                    />
+                                    {/* 选择按钮 */}
+                                    <div
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleSelectImage(asset, idx, activeTab);
+                                      }}
+                                      style={{
+                                        position:'absolute',
+                                        bottom:4,
+                                        right:4,
+                                        background: asset.reference_image_path === imgPath ? T.blue : 'rgba(0,0,0,0.6)',
+                                        color:'#fff',
+                                        padding:'4px 8px',
+                                        borderRadius:T.radiusSm,
+                                        fontSize:11,
+                                        fontWeight:600,
+                                        cursor:'pointer',
+                                        transition:'all 0.2s ease'
+                                      }}>
+                                      {asset.reference_image_path === imgPath ? '✓ 已选' : '选择'}
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 最终图像 */}
+                      {asset.reference_image_path && !asset.candidate_images_json && (
+                        <div>
+                          <div style={{fontSize:12,color:T.textDim,marginBottom:8,fontWeight:600}}>设定图</div>
+                          <img src={asset.reference_image_path} style={{width:'100%',height:200,objectFit:'cover',borderRadius:T.radiusSm}}/>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 缩略图（未展开时显示） */}
+                  {!isExpanded && asset.reference_image_path && (
+                    <img src={asset.reference_image_path} style={{width:'100%',height:120,objectFit:'cover',borderRadius:T.radiusSm,marginTop:12}}/>
+                  )}
+                </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+
+// ── AssetManagementPanel ──
+function AssetManagementPanel({type, projectId, scriptId, onClose, toast}) {
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [generatingFor, setGeneratingFor] = useState(null);
+  const [generationTasks, setGenerationTasks] = useState({});
+  const [selectedAssets, setSelectedAssets] = useState(new Set());
+  const [sharing, setSharing] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null); // 图片预览
+
+  useEffect(() => {
+    if (type !== 'extract') {
+      loadAssets();
+    }
+  }, [type]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const loadAssets = async () => {
+    setLoading(true);
+    try {
+      let endpoint = '';
+      if (type === 'character') endpoint = `/characters/scripts/${scriptId}/list`;
+      else if (type === 'scene') endpoint = `/asset-management/scripts/${scriptId}/scenes`;
+      else if (type === 'item') endpoint = `/asset-management/scripts/${scriptId}/items`;
+      else if (type === 'costume') endpoint = `/asset-management/scripts/${scriptId}/costumes`;
+
+      console.log('Loading assets from:', endpoint);
+      const data = await api(endpoint);
+      console.log('Assets loaded:', data);
+      setAssets(data);
+    } catch (e) {
+      console.error('Load assets error:', e);
+      toast(e.message || '加载失败', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExtractAssets = async () => {
+    if (!scriptId) {
+      toast('请先上传剧本文档', 'error');
+      return;
+    }
+    setExtracting(true);
+    try {
+      console.log('Extracting assets for scriptId:', scriptId);
+      const result = await api(`/asset-management/scripts/${scriptId}/extract-assets`, {
+        method: 'POST'
+      });
+
+      // 显示提取结果
+      let message = `成功提取 ${result.characters_count||0} 个角色、${result.scenes_count||0} 个场景、${result.items_count||0} 个道具、${result.costumes_count||0} 个服装`;
+
+      // 显示跳过的服装数量
+      if (result.skipped_costumes_count > 0) {
+        message += `\n跳过 ${result.skipped_costumes_count} 个服装（无法匹配角色）`;
+      }
+
+      toast(message, 'success');
+
+      // 显示 warnings
+      if (result.warnings && result.warnings.length > 0) {
+        setTimeout(() => {
+          result.warnings.forEach(warning => {
+            toast(warning, 'warning');
+          });
+        }, 500);
+      }
+
+      onClose();
+    } catch (e) {
+      console.error('Extract assets error:', e);
+      toast(e.message || '提取失败', 'error');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const handleGeneratePrompt = async (asset) => {
+    try {
+      console.log('Generating prompt for asset:', asset);
+      const result = await api('/asset-management/generate-prompt', {
+        method: 'POST',
+        body: JSON.stringify({
+          asset_type: type,
+          asset_id: asset.id,
+          asset_name: asset.name || asset.original_name,
+          asset_description: asset.description || '',
+          additional_context: null
+        })
+      });
+      console.log('Prompt generated:', result);
+      toast('提示词已生成', 'success');
+      loadAssets();
+    } catch (e) {
+      console.error('Generate prompt error:', e);
+      toast(e.message || '生成失败', 'error');
+    }
+  };
+
+  const handleGenerateImage = async (asset) => {
+    setGeneratingFor(asset.id);
+    try {
+      console.log('Generating image for asset:', asset, 'type:', type);
+
+      // 角色使用专门的端点
+      if (type === 'character') {
+        const result = await api(`/characters/${asset.id}/generate-images`, {
+          method: 'POST'
+        });
+        toast('人设图生成成功', 'success');
+        loadAssets();
+      } else {
+        // 其他资产使用生成任务
+        const result = await api('/generation-tasks', {
+          method: 'POST',
+          body: JSON.stringify({
+            task_type: type === 'scene' ? 'scene_image' : type === 'item' ? 'item_image' : 'costume_image',
+            prompt: asset.image_prompt || asset.reference_prompt || asset.description,
+            metadata: { target_id: asset.id }
+          })
+        });
+
+        const taskId = result.id;
+        setGenerationTasks(prev => ({...prev, [asset.id]: taskId}));
+
+        // 启动生成任务
+        await api(`/generation-tasks/${taskId}/start`, { method: 'POST' });
+        toast('图像生成已启动', 'success');
+
+        // 轮询任务状态
+        pollTaskStatus(taskId, asset.id);
+      }
+    } catch (e) {
+      console.error('Generate image error:', e);
+      toast(e.message || '生成失败', 'error');
+    } finally {
+      setGeneratingFor(null);
+    }
+  };
+
+  const pollTaskStatus = async (taskId, assetId) => {
+    const interval = setInterval(async () => {
+      try {
+        const task = await api(`/generation-tasks/${taskId}`);
+        if (task.status === 'completed') {
+          clearInterval(interval);
+          setGeneratingFor(null);
+          toast('图像生成完成', 'success');
+          loadAssets();
+        } else if (task.status === 'failed') {
+          clearInterval(interval);
+          setGeneratingFor(null);
+          toast('生成失败: ' + (task.error_message || '未知错误'), 'error');
+        }
+      } catch (e) {
+        clearInterval(interval);
+        setGeneratingFor(null);
+      }
+    }, 3000);
+  };
+
+  const toggleSelectAsset = (assetId) => {
+    const newSelected = new Set(selectedAssets);
+    if (newSelected.has(assetId)) {
+      newSelected.delete(assetId);
+    } else {
+      newSelected.add(assetId);
+    }
+    setSelectedAssets(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedAssets.size === assets.length) {
+      setSelectedAssets(new Set());
+    } else {
+      setSelectedAssets(new Set(assets.map(a => a.id)));
+    }
+  };
+
+  const handleShareAssets = async () => {
+    if (selectedAssets.size === 0) {
+      toast('请先选择要分享的资产', 'warning');
+      return;
+    }
+
+    setSharing(true);
+    try {
+      const items = Array.from(selectedAssets).map(id => ({
+        asset_type: type,
+        source_id: id
+      }));
+
+      const result = await api('/asset-management/share', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: projectId,
+          script_id: scriptId,
+          items: items
+        })
+      });
+
+      toast(`成功分享 ${result.created_assets.length} 个资产，建立 ${result.created_relations.length} 个关系`, 'success');
+
+      // 显示 warnings
+      if (result.warnings && result.warnings.length > 0) {
+        setTimeout(() => {
+          result.warnings.forEach(warning => {
+            toast(warning, 'warning');
+          });
+        }, 500);
+      }
+
+      setSelectedAssets(new Set());
+      loadAssets();
+    } catch (e) {
+      console.error('Share assets error:', e);
+      toast(e.message || '分享失败', 'error');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const getTitle = () => {
+    if (type === 'extract') return '提取资产';
+    if (type === 'character') return '角色管理';
+    if (type === 'scene') return '场景管理';
+    if (type === 'item') return '道具管理';
+    if (type === 'costume') return '服装管理';
+    return '资产管理';
+  };
+
+  const getColor = () => {
+    if (type === 'character') return T.purple;
+    if (type === 'scene') return T.green;
+    if (type === 'item') return T.accent;
+    if (type === 'costume') return T.purple;
+    return T.blue;
+  };
+
+  const getStatusBadge = (status) => {
+    const statusMap = {
+      pending: {color: T.textDim, bg: T.surface2, label: '待生成'},
+      generating: {color: T.blue, bg: T.blueGlow, label: '生成中'},
+      completed: {color: T.green, bg: T.greenGlow, label: '已完成'},
+      failed: {color: T.red, bg: 'rgba(248,113,113,0.18)', label: '失败'}
+    };
+    const s = statusMap[status] || statusMap.pending;
+    return (
+      <span style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,padding:'4px 10px',borderRadius:999,background:s.bg,color:s.color,fontWeight:600}}>
+        <span style={{width:6,height:6,borderRadius:'50%',background:s.color,display:'inline-block'}}/>{s.label}
+      </span>
+    );
+  };
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={onClose}>
+      <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(4px)'}}/>
+      <div onClick={e=>e.stopPropagation()} style={{position:'relative',width:800,maxHeight:'85vh',overflowY:'auto',background:T.surface1,borderRadius:T.radiusXl,border:'1px solid '+T.border,padding:32,boxShadow:'0 32px 96px rgba(0,0,0,0.6)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
+          <div>
+            <h2 style={{fontFamily:T.fontDisplay,fontSize:20,color:T.text,margin:0,fontWeight:700}}>{getTitle()}</h2>
+            <p style={{color:T.textMuted,fontSize:13,margin:'4px 0 0'}}>
+              {type === 'extract' ? '从剧本中提取角色、场景、道具、服装' : `管理${getTitle().replace('管理', '')}资产`}
+            </p>
+          </div>
+          <button onClick={onClose} style={{background:'transparent',border:'none',color:T.textMuted,cursor:'pointer',padding:4}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        {type === 'extract' ? (
+          <div style={{textAlign:'center',padding:'40px 20px'}}>
+            <div style={{marginBottom:24}}>
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={T.blue} strokeWidth="1.5" style={{margin:'0 auto'}}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </div>
+            <h3 style={{color:T.text,fontSize:18,fontWeight:600,marginBottom:12}}>提取资产</h3>
+            <p style={{color:T.textMuted,fontSize:14,marginBottom:32,lineHeight:1.6}}>
+              系统将使用AI从剧本中自动提取角色、场景、道具、服装等资产信息，<br/>
+              并为每个资产生成详细的描述和提示词。
+            </p>
+            <button
+              onClick={handleExtractAssets}
+              disabled={extracting}
+              style={{background:extracting?T.surface3:T.blue,color:extracting?T.textDim:'#fff',border:'none',borderRadius:T.radiusMd,padding:'14px 32px',fontSize:14,fontWeight:700,cursor:extracting?'default':'pointer',boxShadow:extracting?'none':'0 4px 16px rgba(74,144,226,0.3)'}}>
+              {extracting ? (
+                <span style={{display:'flex',alignItems:'center',gap:8}}>
+                  <svg width="16" height="16" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite'}}>
+                    <circle cx="28" cy="28" r="24" stroke={T.textDim} strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+                  </svg>
+                  提取中...
+                </span>
+              ) : '开始提取'}
+            </button>
+          </div>
+        ) : loading ? (
+          <div style={{textAlign:'center',padding:'40px 20px'}}>
+            <svg width="56" height="56" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite',transformOrigin:'center',margin:'0 auto 20px'}}>
+              <circle cx="28" cy="28" r="24" stroke={T.surface3} strokeWidth="3" fill="none"/>
+              <circle cx="28" cy="28" r="24" stroke={getColor()} strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+            </svg>
+            <p style={{color:T.textMuted,fontSize:14}}>加载中...</p>
+          </div>
+        ) : assets.length === 0 ? (
+          <div style={{textAlign:'center',padding:'40px 20px'}}>
+            <p style={{color:T.textMuted,fontSize:14}}>暂无{getTitle().replace('管理', '')}资产，请先提取资产</p>
+          </div>
+        ) : (
+          <>
+            {/* 批量操作工具栏 */}
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,padding:'12px 16px',background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={selectedAssets.size === assets.length && assets.length > 0}
+                    onChange={toggleSelectAll}
+                    style={{width:16,height:16,cursor:'pointer'}}
+                  />
+                  <span style={{color:T.text,fontSize:13,fontWeight:600}}>
+                    全选 ({selectedAssets.size}/{assets.length})
+                  </span>
+                </label>
+              </div>
+              {selectedAssets.size > 0 && (
+                <button
+                  onClick={handleShareAssets}
+                  disabled={sharing}
+                  style={{background:sharing?T.surface3:T.blue,color:sharing?T.textDim:'#fff',border:'none',borderRadius:T.radiusSm,padding:'8px 16px',fontSize:13,fontWeight:600,cursor:sharing?'default':'pointer',display:'flex',alignItems:'center',gap:6}}>
+                  {sharing ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 56 56" fill="none" style={{animation:'spin 1.6s linear infinite'}}>
+                        <circle cx="28" cy="28" r="24" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="150" strokeDashoffset="60" strokeLinecap="round"/>
+                      </svg>
+                      分享中...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="18" cy="5" r="3"/>
+                        <circle cx="6" cy="12" r="3"/>
+                        <circle cx="18" cy="19" r="3"/>
+                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                      </svg>
+                      分享选中资产
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+
+            {/* 资产列表 */}
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {assets.map(asset => (
+                <div key={asset.id} style={{padding:'16px 20px',background:T.surface2,borderRadius:T.radiusMd,border:'1px solid '+T.border}}>
+                  <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+                    {/* 多选框 */}
+                    <input
+                      type="checkbox"
+                      checked={selectedAssets.has(asset.id)}
+                      onChange={() => toggleSelectAsset(asset.id)}
+                      style={{width:18,height:18,marginTop:2,cursor:'pointer',flexShrink:0}}
+                    />
+
+                    {/* 资产信息 */}
+                    <div style={{flex:1}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+                        <h4 style={{color:T.text,fontSize:15,fontWeight:600,margin:0}}>{asset.name || asset.original_name}</h4>
+                        {getStatusBadge(asset.generation_status)}
+                        {asset.user_asset_id && (
+                          <span style={{fontSize:11,padding:'4px 8px',borderRadius:999,background:T.greenGlow,color:T.green,fontWeight:600}}>
+                            已分享
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 服装显示所属角色 */}
+                      {type === 'costume' && asset.character_name && (
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.purple} strokeWidth="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                          </svg>
+                          <span style={{color:T.purple,fontSize:12,fontWeight:600}}>
+                            属于角色: {asset.character_name}
+                          </span>
+                        </div>
+                      )}
+
+                      <p style={{color:T.textMuted,fontSize:13,margin:0,lineHeight:1.5}}>{asset.description}</p>
+                      {(asset.image_prompt || asset.reference_prompt) && (
+                        <p style={{color:T.textDim,fontSize:12,margin:'8px 0 0',fontFamily:T.fontMono,lineHeight:1.5}}>
+                          提示词: {asset.image_prompt || asset.reference_prompt}
+                        </p>
+                      )}
+
+                      {/* 操作按钮 */}
+                      <div style={{display:'flex',gap:8,marginTop:12}}>
+                        {!(asset.image_prompt || asset.reference_prompt) && (
+                          <button
+                            onClick={() => handleGeneratePrompt(asset)}
+                            style={{background:T.surface3,border:'1px solid '+T.border,borderRadius:T.radiusSm,color:T.text,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                            生成提示词
+                          </button>
+                        )}
+                        {(asset.image_prompt || asset.reference_prompt) && asset.generation_status !== 'completed' && (
+                          <button
+                            onClick={() => handleGenerateImage(asset)}
+                            disabled={generatingFor === asset.id}
+                            style={{background:generatingFor===asset.id?T.surface3:getColor(),color:generatingFor===asset.id?T.textDim:'#fff',border:'none',borderRadius:T.radiusSm,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:generatingFor===asset.id?'default':'pointer'}}>
+                            {generatingFor === asset.id ? '生成中...' : '生成图像'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 缩略图 */}
+                    {asset.reference_image_path && (
+                      <img src={asset.reference_image_path} style={{width:80,height:80,objectFit:'cover',borderRadius:T.radiusSm,flexShrink:0}}/>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* 图片预览模态框 */}
+      {previewImage && (
+        <div
+          style={{
+            position:'fixed',
+            inset:0,
+            zIndex:2000,
+            background:'rgba(0,0,0,0.9)',
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center',
+            padding:20
+          }}
+          onClick={() => setPreviewImage(null)}>
+          <button
+            onClick={() => setPreviewImage(null)}
+            style={{
+              position:'absolute',
+              top:20,
+              right:20,
+              background:'rgba(255,255,255,0.1)',
+              border:'1px solid rgba(255,255,255,0.2)',
+              color:'#fff',
+              width:40,
+              height:40,
+              borderRadius:'50%',
+              cursor:'pointer',
+              display:'flex',
+              alignItems:'center',
+              justifyContent:'center'
+            }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+          <img
+            src={previewImage}
+            style={{
+              maxWidth:'90%',
+              maxHeight:'90%',
+              objectFit:'contain',
+              borderRadius:T.radiusMd,
+              boxShadow:'0 32px 96px rgba(0,0,0,0.8)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── App ──
+function App() {
+  const [view, setView] = useState(getToken() ? 'workspace' : 'auth');
+  const [user, setUser] = useState(getUser());
+  const [projectData, setProjectData] = useState(null);
+  const [scriptId, setScriptId] = useState(null);
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  const handleThemeToggle = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  };
+
+  const handleLogin = () => {
+    setUser(getUser());
+    setView('workspace');
+  };
+
+  const handleLogout = () => {
+    clearAuth();
+    setUser(null);
+    setView('auth');
+  };
+
+  const handleOpenProject = (p) => {
+    setProjectData(p);
+    setView('scriptDetail');
+  };
+
+  const handleOpenAssetWorkflow = (project, scriptId) => {
+    setProjectData(project);
+    setScriptId(scriptId);
+    setView('assetWorkflow');
+  };
+
+  return (
+    <ToastProvider>
+      {user ? (
+        <div style={{background:T.bg,minHeight:'100vh',color:T.text}}>
+          <TopNav view={view} onNavigate={setView} onLogout={handleLogout} theme={theme} onThemeToggle={handleThemeToggle}/>
+          <ViewTransition view={view}>
+            {view==='workspace' && <WorkspaceView onOpenProject={handleOpenProject}/>}
+            {view==='scriptDetail' && <ScriptDetailView project={projectData} onBack={()=>setView('workspace')} onOpenAssetWorkflow={handleOpenAssetWorkflow}/>}
+            {view==='assetWorkflow' && <AssetWorkflowView project={projectData} scriptId={scriptId} onBack={()=>setView('scriptDetail')} onComplete={()=>setView('scriptDetail')}/>}
+            {view==='assets' && <AssetsView/>}
+            {view==='profile' && <ProfileView user={user}/>}
+          </ViewTransition>
+        </div>
+      ) : (
+        <AuthView onLogin={handleLogin}/>
+      )}
+    </ToastProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
